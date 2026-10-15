@@ -1,0 +1,1269 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0b1120">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Mi Panel Clínico y Hábitos</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      background-color: #0b1120;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      padding-bottom: 5.5rem;
+    }
+    @media (min-width: 768px) {
+      body { padding-bottom: 2rem; }
+    }
+    .card { background-color: #1e293b; border: 1px solid #334155; border-radius: 0.85rem; }
+    .emotion-neg.active { background-color: #e11d48; color: #ffffff; border-color: #fb7185; font-weight: 600; }
+    .emotion-pos.active { background-color: #059669; color: #ffffff; border-color: #34d399; font-weight: 600; }
+    .trigger-chip.active { background-color: #6366f1; color: white; border-color: #818cf8; }
+    .sideeffect-chip.active { background-color: #f59e0b; color: #0f172a; font-weight: 600; border-color: #f59e0b; }
+    .nav-btn.active { color: #38bdf8; border-top-color: #38bdf8; background-color: #1e293b80; }
+    input[type=range] { height: 8px; border-radius: 6px; cursor: pointer; }
+  </style>
+</head>
+<body class="max-w-5xl mx-auto px-3 pt-3 md:p-6 space-y-4">
+
+  <!-- ENCABEZADO COMPACTO MÓVIL + ESTADO DE NUBE -->
+  <header class="flex justify-between items-center border-b border-slate-800 pb-3">
+    <div>
+      <h1 class="text-lg md:text-2xl font-bold text-white leading-tight">Panel Clínico y Hábitos</h1>
+      <p class="text-slate-400 text-xs">Seguimiento diario, emociones y medicación</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="switchTab('cloud')" id="cloudStatusBadge" class="text-[11px] font-medium px-2.5 py-1.5 rounded-full border border-slate-700 bg-slate-800 text-slate-300 flex items-center gap-1.5">
+        <span>📱</span> <span>Modo Local</span>
+      </button>
+      <button onclick="syncFromCloud(true)" id="btnQuickSync" class="hidden bg-sky-600/20 border border-sky-500/40 text-sky-300 px-2.5 py-1.5 rounded-full text-xs">
+        🔄
+      </button>
+    </div>
+  </header>
+
+  <!-- NAVEGACIÓN SUPERIOR EN PC / INFERIOR FIJA EN CELULAR -->
+  <nav class="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur border-t border-slate-800 md:static md:bg-slate-900 md:border md:rounded-xl md:p-1">
+    <div class="grid grid-cols-5 max-w-5xl mx-auto">
+      <button onclick="switchTab('today')" id="tab-today" class="nav-btn active border-t-2 border-transparent py-2.5 md:py-2 flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-slate-400 hover:text-white transition md:rounded-lg">
+        <span class="text-lg md:text-base">📝</span>
+        <span class="text-[10px] md:text-xs font-semibold">Hoy</span>
+      </button>
+      <button onclick="switchTab('habits')" id="tab-habits" class="nav-btn border-t-2 border-transparent py-2.5 md:py-2 flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-slate-400 hover:text-white transition md:rounded-lg">
+        <span class="text-lg md:text-base">✅</span>
+        <span class="text-[10px] md:text-xs font-semibold">Hábitos</span>
+      </button>
+      <button onclick="switchTab('contrast')" id="tab-contrast" class="nav-btn border-t-2 border-transparent py-2.5 md:py-2 flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-slate-400 hover:text-white transition md:rounded-lg">
+        <span class="text-lg md:text-base">📊</span>
+        <span class="text-[10px] md:text-xs font-semibold">Contraste</span>
+      </button>
+      <button onclick="switchTab('history')" id="tab-history" class="nav-btn border-t-2 border-transparent py-2.5 md:py-2 flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-slate-400 hover:text-white transition md:rounded-lg">
+        <span class="text-lg md:text-base">🗂️</span>
+        <span class="text-[10px] md:text-xs font-semibold">Bitácora</span>
+      </button>
+      <button onclick="switchTab('cloud')" id="tab-cloud" class="nav-btn border-t-2 border-transparent py-2.5 md:py-2 flex flex-col md:flex-row items-center justify-center gap-1 md:gap-2 text-slate-400 hover:text-white transition md:rounded-lg">
+        <span class="text-lg md:text-base">☁️</span>
+        <span class="text-[10px] md:text-xs font-semibold">Nube</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ==========================================
+       PESTAÑA 1: REGISTRO DEL DÍA (HOY)
+       ========================================== -->
+  <main id="view-today" class="space-y-4">
+    
+    <!-- Barra de Medicación Activa y Toma -->
+    <section class="card p-3.5 bg-slate-900/90 border-sky-500/40 space-y-3">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        <div class="flex items-center gap-2.5">
+          <div class="bg-sky-500/20 text-sky-400 p-2 rounded-lg text-lg">💊</div>
+          <div class="flex-1">
+            <span class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block">Esquema Farmacológico Activo</span>
+            <select id="activeRegimenSelect" onchange="changeActiveRegimen()" class="mt-0.5 w-full sm:w-auto bg-slate-800 border border-slate-600 text-white text-xs sm:text-sm font-semibold rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-400">
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
+          <div class="flex-1 sm:flex-initial">
+            <span class="text-[10px] uppercase text-slate-400 block">Hora toma</span>
+            <input id="doseTimeInput" type="time" value="08:30" class="w-full bg-slate-800 border border-slate-600 text-white text-xs rounded-lg px-2 py-1.5">
+          </div>
+          <div class="flex-1 sm:flex-initial">
+            <span class="text-[10px] uppercase text-slate-400 block">Adherencia</span>
+            <select id="doseAdherenceSelect" class="w-full bg-slate-800 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1.5">
+              <option value="En horario">En horario</option>
+              <option value="Toma retrasada">Toma retrasada</option>
+              <option value="Dosis omitida">Dosis omitida</option>
+              <option value="No aplica (Sin medicación)">No aplica</option>
+            </select>
+          </div>
+          <div>
+            <span class="text-[10px] uppercase text-slate-400 block">Día</span>
+            <select id="currentDayIndex" class="bg-slate-800 border border-slate-600 text-white text-xs font-medium rounded-lg px-2 py-1.5">
+              <option value="0">Lun</option>
+              <option value="1">Mar</option>
+              <option value="2">Mié</option>
+              <option value="3">Jue</option>
+              <option value="4">Vie</option>
+              <option value="5">Sáb</option>
+              <option value="6">Dom</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Añadir nuevo esquema plegable o directo -->
+      <div class="flex gap-2 pt-2 border-t border-slate-800/80">
+        <input id="newRegimenInput" type="text" placeholder="¿Cambiaste de medicación o dosis? Escribe el nuevo esquema..." 
+               class="bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white flex-1 focus:outline-none focus:border-sky-500">
+        <button onclick="addRegimen()" class="bg-sky-600 hover:bg-sky-500 text-white px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap">
+          + Esquema
+        </button>
+      </div>
+    </section>
+
+    <!-- Formulario Principal del Día -->
+    <section class="card p-4 space-y-5">
+      
+      <!-- 1. Sliders de Dimensiones (1 a 10) Optimizados para Pulgar -->
+      <div class="space-y-3.5 text-xs bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-300">1. Escalas Clínicas del Día (1 a 10)</h2>
+        
+        <div>
+          <div class="flex justify-between mb-1.5">
+            <span class="font-medium text-emerald-300">😊 Estado Anímico General</span>
+            <span id="valMood" class="font-bold text-sm text-emerald-400">7/10</span>
+          </div>
+          <input id="sliderMood" type="range" min="1" max="10" value="7" oninput="updateSliderLabels()" class="w-full accent-emerald-500 bg-slate-800">
+        </div>
+
+        <div>
+          <div class="flex justify-between mb-1.5">
+            <span class="font-medium text-sky-300">🌙 Calidad del Sueño</span>
+            <span id="valSleep" class="font-bold text-sm text-sky-400">7/10</span>
+          </div>
+          <input id="sliderSleep" type="range" min="1" max="10" value="7" oninput="updateSliderLabels()" class="w-full accent-sky-500 bg-slate-800">
+        </div>
+
+        <div>
+          <div class="flex justify-between mb-1.5">
+            <span class="font-medium text-amber-300">⚡ Nivel de Ansiedad</span>
+            <span id="valAnxiety" class="font-bold text-sm text-amber-400">4/10</span>
+          </div>
+          <input id="sliderAnxiety" type="range" min="1" max="10" value="4" oninput="updateSliderLabels()" class="w-full accent-amber-500 bg-slate-800">
+        </div>
+
+        <div>
+          <div class="flex justify-between mb-1.5">
+            <span class="font-medium text-rose-300">🎯 Ideas Obsesivas / Intrusiones</span>
+            <span id="valObsessions" class="font-bold text-sm text-rose-400">3/10</span>
+          </div>
+          <input id="sliderObsessions" type="range" min="1" max="10" value="3" oninput="updateSliderLabels()" class="w-full accent-rose-500 bg-slate-800">
+        </div>
+
+        <div>
+          <div class="flex justify-between mb-1.5">
+            <span class="font-medium text-purple-300">🔄 Rumiación Mental</span>
+            <span id="valRumination" class="font-bold text-sm text-purple-400">4/10</span>
+          </div>
+          <input id="sliderRumination" type="range" min="1" max="10" value="4" oninput="updateSliderLabels()" class="w-full accent-purple-500 bg-slate-800">
+        </div>
+      </div>
+
+      <!-- 2. Matiz Emocional Específico -->
+      <div class="space-y-2.5">
+        <label class="block text-xs font-bold uppercase tracking-wider text-slate-300">
+          2. ¿Cómo te sientes hoy? (Toca todas las que apliquen)
+        </label>
+        
+        <div class="space-y-2.5">
+          <div>
+            <span class="text-[11px] text-rose-400 font-medium block mb-1.5">Tensión / Disforia / Malestar:</span>
+            <div class="flex flex-wrap gap-2" id="negEmotionsContainer"></div>
+          </div>
+          <div>
+            <span class="text-[11px] text-emerald-400 font-medium block mb-1.5">Bienestar / Ánimo Elevado:</span>
+            <div class="flex flex-wrap gap-2" id="posEmotionsContainer"></div>
+          </div>
+        </div>
+
+        <div class="pt-1 flex gap-1.5">
+          <input id="customEmotionInput" type="text" placeholder="Otra emoción..." 
+                 class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white flex-1">
+          <select id="customEmotionType" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-slate-300">
+            <option value="neg">Malestar</option>
+            <option value="pos">Positivo</option>
+          </select>
+          <button onclick="addCustomEmotion()" class="bg-slate-700 text-xs px-3 py-1.5 rounded-lg text-slate-200 font-medium">+</button>
+        </div>
+      </div>
+
+      <!-- 3. Evento Relevante del Día e Impacto -->
+      <div class="p-3.5 rounded-xl bg-indigo-950/30 border border-indigo-500/30 space-y-2.5">
+        <label class="block text-xs font-bold uppercase tracking-wider text-indigo-300">
+          3. 📌 Evento Relevante del Día y su Influencia
+        </label>
+        <textarea id="dailyEventText" rows="3" 
+                  placeholder="Ej: Hoy hubo muchos problemas en el trabajo y me generó ansiedad... / Me llamaron de una empresa ofreciéndome cosas, me estresó y arruinó mi día..." 
+                  class="w-full bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-400"></textarea>
+        
+        <div class="space-y-1 pt-1">
+          <span class="text-[11px] text-slate-300 block">¿Cómo influyó este evento en tu estado de ánimo?</span>
+          <select id="dailyEventImpact" class="w-full bg-slate-900 border border-slate-700 text-xs sm:text-sm text-white rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-400">
+            <option value="Arruinó mi día / Impacto muy negativo">🔻 Arruinó mi día / Impacto muy negativo</option>
+            <option value="Me generó estrés o ansiedad">⚠️ Me generó estrés o ansiedad</option>
+            <option value="Neutro / No alteró mi estado de ánimo">🛡️ Neutro / No alteró mi estado de ánimo</option>
+            <option value="Mejoró mi día / Impacto positivo">✨ Mejoró mi día / Impacto positivo</option>
+            <option value="Sin evento puntual hoy">➖ Sin evento puntual hoy</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- 4. Efectos Secundarios Físicos y Disparadores Rápidos -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-800">
+        <div>
+          <label class="block text-xs font-bold uppercase tracking-wider text-amber-400/90 mb-2">4. ⚕️ Efectos físicos</label>
+          <div class="flex flex-wrap gap-1.5" id="sideEffectContainer"></div>
+          <div class="mt-2 flex gap-1.5">
+            <input id="customSideEffectInput" type="text" placeholder="Añadir efecto físico..." 
+                   class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white flex-1">
+            <button onclick="addCustomSideEffect()" class="bg-slate-700 text-xs px-3 py-1.5 rounded-lg text-slate-200">+</button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold uppercase tracking-wider text-indigo-300 mb-2">5. ⚡ Disparadores rápidos</label>
+          <div class="flex flex-wrap gap-1.5" id="triggerContainer"></div>
+          <div class="mt-2 flex gap-1.5">
+            <input id="customTriggerInput" type="text" placeholder="Añadir disparador..." 
+                   class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white flex-1">
+            <button onclick="addCustomTrigger()" class="bg-slate-700 text-xs px-3 py-1.5 rounded-lg text-slate-200">+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. Nota Clínica Adicional -->
+      <div>
+        <input id="mentalNote" type="text" placeholder="Nota clínica adicional opcional..." 
+               class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-sky-500">
+      </div>
+
+      <button onclick="saveDailyClinicalLog()" class="w-full bg-sky-600 active:bg-sky-700 hover:bg-sky-500 text-white font-bold py-3.5 rounded-xl text-sm transition shadow-lg">
+        💾 Guardar Registro del Día
+      </button>
+    </section>
+  </main>
+
+  <!-- ==========================================
+       PESTAÑA 2: HÁBITOS SEMANALES (TÁCTIL)
+       ========================================== -->
+  <section id="view-habits" class="hidden space-y-4">
+    <div class="card p-4 space-y-4">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-white">Seguimiento de Hábitos Semanales</h2>
+          <p class="text-xs text-slate-400">Cumplimiento total: <strong id="globalRate" class="text-emerald-400">0%</strong> · Mejor racha activa: <strong id="bestStreak" class="text-amber-400">0 días</strong></p>
+        </div>
+        <div class="flex gap-2 w-full sm:w-auto">
+          <input id="newHabitInput" type="text" placeholder="Nuevo hábito diario..." 
+                 class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white flex-1 sm:w-56">
+          <button onclick="addHabit()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap">
+            + Añadir
+          </button>
+        </div>
+      </div>
+
+      <!-- Lista de tarjetas táctiles de hábitos -->
+      <div id="habitsMobileList" class="space-y-3"></div>
+
+      <div class="pt-2 border-t border-slate-800 flex justify-between items-center text-xs text-slate-400">
+        <span>Toca cada letra del día para marcar o desmarcar.</span>
+        <button onclick="resetWeek()" class="text-rose-400 underline">Reiniciar semana</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       PESTAÑA 3: CONTRASTE FARMACOLÓGICO Y GRÁFICOS
+       ========================================== -->
+  <section id="view-contrast" class="hidden space-y-4">
+    
+    <!-- Contraste por Periodo -->
+    <div class="card p-4 space-y-4">
+      <div>
+        <h2 class="text-base sm:text-lg font-bold text-white">Contraste por Periodo Farmacológico</h2>
+        <p class="text-xs text-slate-400">Comparativa de promedios (escala 1–10), emociones y efectos físicos según medicación</p>
+      </div>
+
+      <div class="relative h-64 w-full">
+        <canvas id="contrastChart"></canvas>
+      </div>
+
+      <div class="overflow-x-auto border-t border-slate-800 pt-3">
+        <table class="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr class="text-slate-400 border-b border-slate-700 uppercase text-[10px]">
+              <th class="py-2 pr-2">Esquema / Periodo</th>
+              <th class="py-2 px-1 text-center">Días</th>
+              <th class="py-2 px-1 text-center text-emerald-400">Ánimo</th>
+              <th class="py-2 px-1 text-center text-sky-400">Sueño</th>
+              <th class="py-2 px-1 text-center text-amber-400">Ansied.</th>
+              <th class="py-2 px-1 text-center text-rose-400">Obses.</th>
+              <th class="py-2 px-1 text-center text-purple-400">Rumiación</th>
+              <th class="py-2 pl-2 text-indigo-300">Emociones Frecuentes</th>
+              <th class="py-2 pl-2 text-amber-300">Efectos Físicos</th>
+            </tr>
+          </thead>
+          <tbody id="contrastTableBody" class="divide-y divide-slate-800"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Evolución Diaria -->
+    <div class="card p-4 space-y-3">
+      <div>
+        <h2 class="text-base sm:text-lg font-bold text-white">Evolución Diaria: Hábitos vs. Clínica</h2>
+        <p class="text-xs text-slate-400">Últimos 10 días registrados (% de hábitos en barras vs. escalas 1–10 en líneas)</p>
+      </div>
+      <div class="relative h-64 w-full">
+        <canvas id="timelineChart"></canvas>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ==========================================
+       PESTAÑA 4: BITÁCORA Y BUSCADOR
+       ========================================== -->
+  <section id="view-history" class="hidden space-y-4">
+    <div class="card p-4 space-y-4">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-3">
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-white">Bitácora Diaria y Buscador</h2>
+          <p class="text-xs text-slate-400">Filtra por eventos laborales, emociones puntuales, impacto o medicación</p>
+        </div>
+        <button onclick="resetHistoryFilters()" class="text-xs bg-slate-800 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-lg">
+          🔄 Limpiar filtros
+        </button>
+      </div>
+
+      <!-- Controles de Filtrado -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 bg-slate-900/70 p-3 rounded-xl border border-slate-800">
+        <div>
+          <label class="block text-[10px] uppercase text-slate-400 font-semibold mb-1">🔍 Palabra clave / Evento</label>
+          <input id="filterSearchInput" type="text" oninput="renderClinicalHistory()" placeholder="Ej: trabajo, empresa, Martes..." 
+                 class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-slate-400 font-semibold mb-1">🎭 Emoción</label>
+          <select id="filterEmotionSelect" onchange="renderClinicalHistory()" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
+            <option value="ALL">Todas las emociones</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-slate-400 font-semibold mb-1">📌 Impacto del evento</label>
+          <select id="filterImpactSelect" onchange="renderClinicalHistory()" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
+            <option value="ALL">Cualquier impacto</option>
+            <option value="Arruinó mi día / Impacto muy negativo">🔻 Arruinó mi día</option>
+            <option value="Me generó estrés o ansiedad">⚠️ Generó estrés / ansiedad</option>
+            <option value="Neutro / No alteró mi estado de ánimo">🛡️ Neutro</option>
+            <option value="Mejoró mi día / Impacto positivo">✨ Mejoró mi día</option>
+            <option value="Sin evento puntual hoy">➖ Sin evento puntual</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-[10px] uppercase text-slate-400 font-semibold mb-1">💊 Esquema</label>
+          <select id="filterRegimenSelect" onchange="renderClinicalHistory()" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white">
+            <option value="ALL">Todos los esquemas</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Resumen de la selección -->
+      <div id="filterSummaryBar" class="flex flex-wrap items-center justify-between gap-2 bg-slate-800/40 border border-slate-700/60 rounded-lg px-3 py-2 text-xs"></div>
+
+      <!-- Tarjetas de la Bitácora -->
+      <div id="clinicalHistoryList" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+    </div>
+  </section>
+
+  <!-- ==========================================
+       PESTAÑA 5: NUBE Y RESPALDO DE DATOS
+       ========================================== -->
+  <section id="view-cloud" class="hidden space-y-4">
+    
+    <!-- Configuración de Sincronización en la Nube (Firebase Realtime DB) -->
+    <div class="card p-4 space-y-4 border-sky-500/40">
+      <div class="flex items-start gap-3">
+        <div class="bg-sky-500/20 text-sky-400 p-2.5 rounded-xl text-xl">☁️</div>
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-white">Sincronización Automática en la Nube (Celular ↔ PC)</h2>
+          <p class="text-xs text-slate-400">Conecta una base gratuita de Firebase para que tus datos nunca se borren al limpiar la caché del celular y se sincronicen con tu computadora.</p>
+        </div>
+      </div>
+
+      <div class="space-y-3 bg-slate-900/70 p-3.5 rounded-xl border border-slate-800 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">URL de tu Firebase Realtime Database:</label>
+          <input id="cloudUrlInput" type="url" placeholder="https://mi-panel-default-rtdb.firebaseio.com" 
+                 class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-400">
+        </div>
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">Clave o Nombre de tu Perfil (sin espacios, ej. alejandro_2026):</label>
+          <input id="cloudUserKeyInput" type="text" placeholder="mi_perfil_privado" 
+                 class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-sky-400">
+        </div>
+
+        <div class="flex flex-wrap gap-2 pt-2">
+          <button onclick="saveCloudConfig()" class="bg-sky-600 hover:bg-sky-500 text-white font-semibold px-4 py-2 rounded-lg transition">
+            🔗 Guardar y Conectar Nube
+          </button>
+          <button onclick="syncToCloud(true)" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-3 py-2 rounded-lg transition">
+            ⬆ Subir datos actuales a la Nube
+          </button>
+          <button onclick="syncFromCloud(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-3 py-2 rounded-lg transition">
+            ⬇ Descargar datos desde la Nube
+          </button>
+        </div>
+        <p id="cloudFeedbackMsg" class="text-[11px] text-slate-400 pt-1"></p>
+      </div>
+    </div>
+
+    <!-- Exportación e Importación Manual de Archivos -->
+    <div class="card p-4 space-y-3">
+      <h3 class="text-sm font-bold text-white">Respaldo Manual en Archivos (Excel CSV / JSON)</h3>
+      <p class="text-xs text-slate-400">Descarga una copia local en tu teléfono o computadora o restaura un respaldo anterior.</p>
+      <div class="flex flex-wrap gap-2 pt-1">
+        <button onclick="exportCSV()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-lg">
+          📊 Exportar Planilla Excel (CSV)
+        </button>
+        <button onclick="exportJSON()" class="bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-lg">
+          ⬇ Descargar Backup JSON
+        </button>
+        <input type="file" id="importJsonInput" accept=".json" class="hidden" onchange="importJSON(event)">
+        <button onclick="document.getElementById('importJsonInput').click()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-2.5 rounded-lg">
+          ⬆ Restaurar Backup JSON
+        </button>
+        <button onclick="clearAllData()" class="bg-slate-800 hover:bg-rose-950 text-rose-300 border border-slate-700 text-xs px-3.5 py-2.5 rounded-lg">
+          🗑 Borrar datos de prueba / Empezar de cero
+        </button>
+      </div>
+    </div>
+
+  </section>
+
+  <script>
+    const DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+    const DAY_INITIALS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+
+    const defaultHabits = [
+      { id: 1, name: 'Lectura / Estudio enfocado', days: [true, true, true, false, true, false, false] },
+      { id: 2, name: 'Actividad física / Caminata', days: [true, false, true, true, false, true, false] },
+      { id: 3, name: 'Higiene del sueño (sin pantallas)', days: [true, true, false, true, true, false, false] },
+      { id: 4, name: 'Práctica de descarga / Respiración', days: [false, true, true, true, false, false, false] }
+    ];
+
+    const defaultRegimens = [
+      'Sin medicación',
+      'Esquema A (ISRS dosis inicial)',
+      'Esquema B (Ajuste de dosis / Combinado)'
+    ];
+
+    const defaultNegEmotions = ['Angustiado', 'Nervioso', 'Estresado', 'Ansioso', 'Irritable', 'Desganado'];
+    const defaultPosEmotions = ['Contento', 'Feliz', 'Motivado', 'Animado', 'Eufórico', 'En calma'];
+    const defaultSideEffects = ['Sin efectos adversos', 'Somnolencia diurna', 'Cefalea', 'Sequedad bucal', 'Cambios en el apetito', 'Molestia gastrointestinal', 'Fatiga física'];
+    const defaultTriggers = ['Problemas laborales', 'Llamadas / Spam molesto', 'Sueño fragmentado', 'Exceso de cafeína', 'Ejercicio físico', 'Tiempo libre de calidad'];
+
+    const defaultLogs = [
+      {
+        id: 101, date: '06 Oct', dayName: 'Martes', regimen: 'Sin medicación', doseTime: '-', adherence: 'No aplica (Sin medicación)',
+        mood: 4, sleep: 4, anxiety: 8, obsessions: 8, rumination: 9, habitRate: 50,
+        emotions: ['Angustiado', 'Ansioso', 'Estresado'],
+        eventText: 'Hoy hubo muchos problemas en el trabajo; acumulé mucha tensión durante toda la tarde.',
+        eventImpact: 'Me generó estrés o ansiedad',
+        sideEffects: ['Fatiga física'], triggers: ['Problemas laborales', 'Sueño fragmentado'], note: 'Costó desconectar al llegar a casa.'
+      },
+      {
+        id: 102, date: '07 Oct', dayName: 'Miércoles', regimen: 'Sin medicación', doseTime: '-', adherence: 'No aplica (Sin medicación)',
+        mood: 3, sleep: 5, anxiety: 8, obsessions: 7, rumination: 8, habitRate: 25,
+        emotions: ['Estresado', 'Nervioso', 'Irritable'],
+        eventText: 'Me llamaron de una empresa ofreciéndome cosas de forma insistente en medio de mis tareas, me generó mucho estrés y arruinó mi día.',
+        eventImpact: 'Arruinó mi día / Impacto muy negativo',
+        sideEffects: ['Cefalea'], triggers: ['Llamadas / Spam molesto'], note: 'Quedé enganchado rumiando el mal momento.'
+      },
+      {
+        id: 104, date: '13 Oct', dayName: 'Martes', regimen: 'Esquema B (Ajuste de dosis / Combinado)', doseTime: '08:30', adherence: 'En horario',
+        mood: 8, sleep: 8, anxiety: 3, obsessions: 3, rumination: 3, habitRate: 75,
+        emotions: ['Contento', 'Motivado', 'En calma'],
+        eventText: 'Surgió un problema complejo en el trabajo pero pude resolverlo sin quedarme rumiando.',
+        eventImpact: 'Neutro / No alteró mi estado de ánimo',
+        sideEffects: ['Sin efectos adversos'], triggers: ['Problemas laborales', 'Ejercicio físico'], note: 'Mucho mejor foco y descanso continuo.'
+      },
+      {
+        id: 105, date: '14 Oct', dayName: 'Miércoles', regimen: 'Esquema B (Ajuste de dosis / Combinado)', doseTime: '08:30', adherence: 'En horario',
+        mood: 9, sleep: 8, anxiety: 2, obsessions: 2, rumination: 2, habitRate: 100,
+        emotions: ['Feliz', 'Motivado', 'Animado', 'Eufórico'],
+        eventText: 'Avancé con todos mis objetivos diarios y terminé el día con energía.',
+        eventImpact: 'Mejoró mi día / Impacto positivo',
+        sideEffects: ['Sin efectos adversos'], triggers: ['Ejercicio físico', 'Tiempo libre de calidad'], note: 'Excelente estabilidad anímica.'
+      }
+    ];
+
+    let habits = JSON.parse(localStorage.getItem('hc_habits_v5')) || defaultHabits;
+    let regimens = JSON.parse(localStorage.getItem('hc_regimens_v5')) || defaultRegimens;
+    let activeRegimen = localStorage.getItem('hc_activeRegimen_v5') || regimens[regimens.length - 1];
+    let negEmotions = JSON.parse(localStorage.getItem('hc_negEmotions_v5')) || defaultNegEmotions;
+    let posEmotions = JSON.parse(localStorage.getItem('hc_posEmotions_v5')) || defaultPosEmotions;
+    let sideEffects = JSON.parse(localStorage.getItem('hc_sideEffects_v5')) || defaultSideEffects;
+    let triggers = JSON.parse(localStorage.getItem('hc_triggers_v5')) || defaultTriggers;
+    let clinicalLogs = JSON.parse(localStorage.getItem('hc_logs_v5')) || defaultLogs;
+
+    let cloudUrl = localStorage.getItem('hc_cloud_url') || '';
+    let cloudUserKey = localStorage.getItem('hc_cloud_key') || 'panel_principal';
+
+    let selectedEmotions = new Set();
+    let selectedSideEffects = new Set();
+    let selectedTriggers = new Set();
+    let timelineChartInstance = null;
+    let contrastChartInstance = null;
+
+    const jsDay = new Date().getDay();
+    document.getElementById('currentDayIndex').value = jsDay === 0 ? 6 : jsDay - 1;
+
+    // --- NAVEGACIÓN POR PESTAÑAS ---
+    function switchTab(tabName) {
+      ['today', 'habits', 'contrast', 'history', 'cloud'].forEach(t => {
+        document.getElementById(`view-${t}`).classList.toggle('hidden', t !== tabName);
+        document.getElementById(`tab-${t}`).classList.toggle('active', t === tabName);
+      });
+      if (tabName === 'contrast') {
+        updateTimelineChart();
+        updateContrastEngine();
+      } else if (tabName === 'history') {
+        renderClinicalHistory();
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function saveState(pushCloud = true) {
+      localStorage.setItem('hc_habits_v5', JSON.stringify(habits));
+      localStorage.setItem('hc_regimens_v5', JSON.stringify(regimens));
+      localStorage.setItem('hc_activeRegimen_v5', activeRegimen);
+      localStorage.setItem('hc_negEmotions_v5', JSON.stringify(negEmotions));
+      localStorage.setItem('hc_posEmotions_v5', JSON.stringify(posEmotions));
+      localStorage.setItem('hc_sideEffects_v5', JSON.stringify(sideEffects));
+      localStorage.setItem('hc_triggers_v5', JSON.stringify(triggers));
+      localStorage.setItem('hc_logs_v5', JSON.stringify(clinicalLogs));
+      if (pushCloud && cloudUrl) {
+        syncToCloud(false);
+      }
+    }
+
+    // --- SINCRONIZACIÓN EN LA NUBE (FIREBASE REST) ---
+    function updateCloudBadge() {
+      const badge = document.getElementById('cloudStatusBadge');
+      const btnQuick = document.getElementById('btnQuickSync');
+      document.getElementById('cloudUrlInput').value = cloudUrl;
+      document.getElementById('cloudUserKeyInput').value = cloudUserKey;
+
+      if (cloudUrl) {
+        badge.innerHTML = '<span>☁️</span> <span class="text-emerald-400">Nube Activa</span>';
+        badge.className = 'text-[11px] font-medium px-2.5 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/40 text-emerald-300 flex items-center gap-1.5';
+        btnQuick.classList.remove('hidden');
+      } else {
+        badge.innerHTML = '<span>📱</span> <span>Solo Local</span>';
+        badge.className = 'text-[11px] font-medium px-2.5 py-1.5 rounded-full border border-slate-700 bg-slate-800 text-slate-300 flex items-center gap-1.5';
+        btnQuick.classList.add('hidden');
+      }
+    }
+
+    function getCleanEndpoint() {
+      const base = cloudUrl.trim().replace(/\/$/, '');
+      const key = (cloudUserKey.trim() || 'panel_principal').replace(/[^a-zA-Z0-9_-]/g, '_');
+      return `${base}/${key}.json`;
+    }
+
+    async function saveCloudConfig() {
+      cloudUrl = document.getElementById('cloudUrlInput').value.trim();
+      cloudUserKey = document.getElementById('cloudUserKeyInput').value.trim() || 'panel_principal';
+      localStorage.setItem('hc_cloud_url', cloudUrl);
+      localStorage.setItem('hc_cloud_key', cloudUserKey);
+      updateCloudBadge();
+      if (cloudUrl) {
+        await syncFromCloud(true);
+      }
+    }
+
+    async function syncToCloud(showMsg = false) {
+      if (!cloudUrl) return;
+      const msgEl = document.getElementById('cloudFeedbackMsg');
+      try {
+        const payload = { habits, regimens, activeRegimen, negEmotions, posEmotions, sideEffects, triggers, clinicalLogs, updatedAt: new Date().toISOString() };
+        const res = await fetch(getCleanEndpoint(), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok && showMsg) {
+          msgEl.textContent = '✅ Datos subidos y sincronizados correctamente en la nube.';
+          msgEl.className = 'text-[11px] text-emerald-400 pt-1';
+        }
+      } catch (e) {
+        if (showMsg) {
+          msgEl.textContent = '❌ Error al subir a la nube. Verifica la URL de Firebase.';
+          msgEl.className = 'text-[11px] text-rose-400 pt-1';
+        }
+      }
+    }
+
+    async function syncFromCloud(showMsg = false) {
+      if (!cloudUrl) return;
+      const msgEl = document.getElementById('cloudFeedbackMsg');
+      try {
+        const res = await fetch(getCleanEndpoint());
+        if (!res.ok) throw new Error('Error HTTP');
+        const data = await res.json();
+        if (data) {
+          if (data.habits) habits = data.habits;
+          if (data.regimens) regimens = data.regimens;
+          if (data.activeRegimen) activeRegimen = data.activeRegimen;
+          if (data.negEmotions) negEmotions = data.negEmotions;
+          if (data.posEmotions) posEmotions = data.posEmotions;
+          if (data.sideEffects) sideEffects = data.sideEffects;
+          if (data.triggers) triggers = data.triggers;
+          if (data.clinicalLogs) clinicalLogs = data.clinicalLogs;
+          saveState(false);
+          renderRegimens();
+          renderHabits();
+          renderEmotions();
+          renderSideEffects();
+          renderTriggers();
+          updateAllAnalytics();
+          if (showMsg) {
+            msgEl.textContent = '✅ Datos descargados de la nube y actualizados en este dispositivo.';
+            msgEl.className = 'text-[11px] text-emerald-400 pt-1';
+          }
+        } else {
+          await syncToCloud(showMsg);
+        }
+      } catch (e) {
+        if (showMsg) {
+          msgEl.textContent = '❌ No se pudo conectar. Verifica tu URL de Firebase y las reglas (.read/.write: true).';
+          msgEl.className = 'text-[11px] text-rose-400 pt-1';
+        }
+      }
+    }
+
+    // --- ESQUEMAS FARMACOLÓGICOS ---
+    function renderRegimens() {
+      const select = document.getElementById('activeRegimenSelect');
+      select.innerHTML = regimens.map(r => `<option value="${r}" ${r === activeRegimen ? 'selected' : ''}>${r}</option>`).join('');
+      syncAdherenceWithRegimen();
+      populateFilterDropdowns();
+    }
+
+    function syncAdherenceWithRegimen() {
+      const adhSelect = document.getElementById('doseAdherenceSelect');
+      if (activeRegimen.toLowerCase().includes('sin medicación')) {
+        adhSelect.value = 'No aplica (Sin medicación)';
+      } else if (adhSelect.value === 'No aplica (Sin medicación)') {
+        adhSelect.value = 'En horario';
+      }
+    }
+
+    function changeActiveRegimen() {
+      activeRegimen = document.getElementById('activeRegimenSelect').value;
+      syncAdherenceWithRegimen();
+      saveState();
+    }
+
+    function addRegimen() {
+      const input = document.getElementById('newRegimenInput');
+      const val = input.value.trim();
+      if (!val) return;
+      if (!regimens.includes(val)) regimens.push(val);
+      activeRegimen = val;
+      input.value = '';
+      saveState();
+      renderRegimens();
+    }
+
+    // --- HÁBITOS TÁCTILES PARA CELULAR ---
+    function calculateStreak(daysArray) {
+      let current = 0, max = 0;
+      for (let c of daysArray) {
+        if (c) { current++; if (current > max) max = current; }
+        else { current = 0; }
+      }
+      return max;
+    }
+
+    function renderHabits() {
+      const container = document.getElementById('habitsMobileList');
+      container.innerHTML = '';
+      let totalChecks = 0, bestStreakOverall = 0;
+
+      habits.forEach((h, hIndex) => {
+        const streak = calculateStreak(h.days);
+        if (streak > bestStreakOverall) bestStreakOverall = streak;
+        totalChecks += h.days.filter(Boolean).length;
+
+        const daysButtons = h.days.map((checked, dIndex) => `
+          <button onclick="toggleDay(${hIndex}, ${dIndex})" 
+                  class="w-9 h-9 sm:w-10 sm:h-10 rounded-full text-xs font-bold border transition flex items-center justify-center ${
+                    checked 
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm' 
+                      : 'bg-slate-800/90 text-slate-400 border-slate-700 hover:border-slate-500'
+                  }">
+            ${DAY_INITIALS[dIndex]}
+          </button>
+        `).join('');
+
+        const card = document.createElement('div');
+        card.className = 'bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 space-y-2.5';
+        card.innerHTML = `
+          <div class="flex justify-between items-center gap-2">
+            <span class="font-semibold text-slate-100 text-xs sm:text-sm">${h.name}</span>
+            <div class="flex items-center gap-2">
+              <span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${streak >= 3 ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">🔥 ${streak}d</span>
+              <button onclick="deleteHabit(${hIndex})" class="text-slate-500 hover:text-rose-400 text-xs px-1">✕</button>
+            </div>
+          </div>
+          <div class="flex justify-between items-center gap-1 pt-1">
+            ${daysButtons}
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      const totalPossible = habits.length * 7;
+      const rate = totalPossible > 0 ? Math.round((totalChecks / totalPossible) * 100) : 0;
+      document.getElementById('globalRate').textContent = `${rate}%`;
+      document.getElementById('bestStreak').textContent = `${bestStreakOverall} días`;
+    }
+
+    function toggleDay(hIndex, dIndex) {
+      habits[hIndex].days[dIndex] = !habits[hIndex].days[dIndex];
+      saveState();
+      renderHabits();
+    }
+
+    function addHabit() {
+      const input = document.getElementById('newHabitInput');
+      const name = input.value.trim();
+      if (!name) return;
+      habits.push({ id: Date.now(), name, days: [false, false, false, false, false, false, false] });
+      input.value = '';
+      saveState();
+      renderHabits();
+    }
+
+    function deleteHabit(index) {
+      habits.splice(index, 1);
+      saveState();
+      renderHabits();
+    }
+
+    function resetWeek() {
+      habits.forEach(h => h.days = [false, false, false, false, false, false, false]);
+      saveState();
+      renderHabits();
+    }
+
+    // --- SLIDERS, EMOCIONES, EFECTOS Y DISPARADORES ---
+    function updateSliderLabels() {
+      document.getElementById('valMood').textContent = document.getElementById('sliderMood').value + '/10';
+      document.getElementById('valSleep').textContent = document.getElementById('sliderSleep').value + '/10';
+      document.getElementById('valAnxiety').textContent = document.getElementById('sliderAnxiety').value + '/10';
+      document.getElementById('valObsessions').textContent = document.getElementById('sliderObsessions').value + '/10';
+      document.getElementById('valRumination').textContent = document.getElementById('sliderRumination').value + '/10';
+    }
+
+    function renderEmotions() {
+      const negContainer = document.getElementById('negEmotionsContainer');
+      const posContainer = document.getElementById('posEmotionsContainer');
+      negContainer.innerHTML = '';
+      posContainer.innerHTML = '';
+
+      negEmotions.forEach(em => {
+        const isActive = selectedEmotions.has(em);
+        const btn = document.createElement('button');
+        btn.className = `emotion-neg text-xs px-3 py-1.5 rounded-full border border-rose-800/60 text-rose-200 transition ${isActive ? 'active' : 'bg-rose-950/30'}`;
+        btn.textContent = em;
+        btn.onclick = () => {
+          if (selectedEmotions.has(em)) selectedEmotions.delete(em);
+          else selectedEmotions.add(em);
+          renderEmotions();
+        };
+        negContainer.appendChild(btn);
+      });
+
+      posEmotions.forEach(em => {
+        const isActive = selectedEmotions.has(em);
+        const btn = document.createElement('button');
+        btn.className = `emotion-pos text-xs px-3 py-1.5 rounded-full border border-emerald-800/60 text-emerald-200 transition ${isActive ? 'active' : 'bg-emerald-950/30'}`;
+        btn.textContent = em;
+        btn.onclick = () => {
+          if (selectedEmotions.has(em)) selectedEmotions.delete(em);
+          else selectedEmotions.add(em);
+          renderEmotions();
+        };
+        posContainer.appendChild(btn);
+      });
+
+      populateFilterDropdowns();
+    }
+
+    function addCustomEmotion() {
+      const input = document.getElementById('customEmotionInput');
+      const type = document.getElementById('customEmotionType').value;
+      const val = input.value.trim();
+      if (!val) return;
+      if (type === 'neg' && !negEmotions.includes(val)) negEmotions.push(val);
+      else if (type === 'pos' && !posEmotions.includes(val)) posEmotions.push(val);
+      selectedEmotions.add(val);
+      input.value = '';
+      saveState();
+      renderEmotions();
+    }
+
+    function renderSideEffects() {
+      const container = document.getElementById('sideEffectContainer');
+      container.innerHTML = '';
+      sideEffects.forEach(se => {
+        const isActive = selectedSideEffects.has(se);
+        const btn = document.createElement('button');
+        btn.className = `sideeffect-chip text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 transition ${isActive ? 'active' : 'bg-slate-800/60'}`;
+        btn.textContent = se;
+        btn.onclick = () => {
+          if (selectedSideEffects.has(se)) selectedSideEffects.delete(se);
+          else selectedSideEffects.add(se);
+          renderSideEffects();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function addCustomSideEffect() {
+      const input = document.getElementById('customSideEffectInput');
+      const val = input.value.trim();
+      if (val && !sideEffects.includes(val)) {
+        sideEffects.push(val);
+        selectedSideEffects.add(val);
+        input.value = '';
+        saveState();
+        renderSideEffects();
+      }
+    }
+
+    function renderTriggers() {
+      const container = document.getElementById('triggerContainer');
+      container.innerHTML = '';
+      triggers.forEach(t => {
+        const isActive = selectedTriggers.has(t);
+        const btn = document.createElement('button');
+        btn.className = `trigger-chip text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 transition ${isActive ? 'active' : 'bg-slate-800/60'}`;
+        btn.textContent = t;
+        btn.onclick = () => {
+          if (selectedTriggers.has(t)) selectedTriggers.delete(t);
+          else selectedTriggers.add(t);
+          renderTriggers();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function addCustomTrigger() {
+      const input = document.getElementById('customTriggerInput');
+      const val = input.value.trim();
+      if (val && !triggers.includes(val)) {
+        triggers.push(val);
+        selectedTriggers.add(val);
+        input.value = '';
+        saveState();
+        renderTriggers();
+      }
+    }
+
+    // --- GUARDAR REGISTRO DIARIO ---
+    function saveDailyClinicalLog() {
+      const dayIdx = parseInt(document.getElementById('currentDayIndex').value, 10);
+      const dayName = DAYS[dayIdx];
+      const completedToday = habits.reduce((acc, h) => acc + (h.days[dayIdx] ? 1 : 0), 0);
+      const habitRate = habits.length > 0 ? Math.round((completedToday / habits.length) * 100) : 0;
+
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+      const adherence = document.getElementById('doseAdherenceSelect').value;
+      const rawTime = document.getElementById('doseTimeInput').value;
+      const doseTime = adherence.includes('No aplica') ? '-' : (rawTime || '-');
+
+      const eventText = document.getElementById('dailyEventText').value.trim();
+      const eventImpact = document.getElementById('dailyEventImpact').value;
+
+      const newEntry = {
+        id: Date.now(),
+        date: dateStr,
+        dayName: dayName,
+        regimen: activeRegimen,
+        doseTime: doseTime,
+        adherence: adherence,
+        mood: parseInt(document.getElementById('sliderMood').value, 10),
+        sleep: parseInt(document.getElementById('sliderSleep').value, 10),
+        anxiety: parseInt(document.getElementById('sliderAnxiety').value, 10),
+        obsessions: parseInt(document.getElementById('sliderObsessions').value, 10),
+        rumination: parseInt(document.getElementById('sliderRumination').value, 10),
+        habitRate: habitRate,
+        emotions: Array.from(selectedEmotions),
+        eventText: eventText,
+        eventImpact: eventText ? eventImpact : 'Sin evento puntual hoy',
+        sideEffects: Array.from(selectedSideEffects),
+        triggers: Array.from(selectedTriggers),
+        note: document.getElementById('mentalNote').value.trim()
+      };
+
+      clinicalLogs.push(newEntry);
+      selectedEmotions.clear();
+      selectedSideEffects.clear();
+      selectedTriggers.clear();
+      document.getElementById('dailyEventText').value = '';
+      document.getElementById('mentalNote').value = '';
+
+      saveState();
+      renderEmotions();
+      renderSideEffects();
+      renderTriggers();
+      updateAllAnalytics();
+      switchTab('history');
+    }
+
+    function deleteLog(id) {
+      clinicalLogs = clinicalLogs.filter(l => l.id !== id);
+      saveState();
+      updateAllAnalytics();
+    }
+
+    // --- FILTROS Y ANALÍTICA ---
+    function populateFilterDropdowns() {
+      const emotionSelect = document.getElementById('filterEmotionSelect');
+      const currentEm = emotionSelect ? emotionSelect.value : 'ALL';
+      if (emotionSelect) {
+        emotionSelect.innerHTML = `<option value="ALL">Todas las emociones</option>` +
+          `<optgroup label="Tensión / Malestar">` +
+          negEmotions.map(e => `<option value="${e}">${e}</option>`).join('') +
+          `</optgroup><optgroup label="Bienestar / Ánimo Elevado">` +
+          posEmotions.map(e => `<option value="${e}">${e}</option>`).join('') +
+          `</optgroup>`;
+        emotionSelect.value = [...negEmotions, ...posEmotions].includes(currentEm) ? currentEm : 'ALL';
+      }
+
+      const regimenSelect = document.getElementById('filterRegimenSelect');
+      const currentReg = regimenSelect ? regimenSelect.value : 'ALL';
+      if (regimenSelect) {
+        regimenSelect.innerHTML = `<option value="ALL">Todos los esquemas</option>` +
+          regimens.map(r => `<option value="${r}">${r}</option>`).join('');
+        regimenSelect.value = regimens.includes(currentReg) ? currentReg : 'ALL';
+      }
+    }
+
+    function resetHistoryFilters() {
+      document.getElementById('filterSearchInput').value = '';
+      document.getElementById('filterEmotionSelect').value = 'ALL';
+      document.getElementById('filterImpactSelect').value = 'ALL';
+      document.getElementById('filterRegimenSelect').value = 'ALL';
+      renderClinicalHistory();
+    }
+
+    function filterByEmotionQuick(emotionName) {
+      document.getElementById('filterEmotionSelect').value = emotionName;
+      switchTab('history');
+    }
+
+    function updateAllAnalytics() {
+      populateFilterDropdowns();
+      updateTimelineChart();
+      updateContrastEngine();
+      renderClinicalHistory();
+    }
+
+    function updateTimelineChart() {
+      const recent = clinicalLogs.slice(-10);
+      const labels = recent.map(l => `${l.dayName ? l.dayName.slice(0,3) : ''} ${l.date}`);
+      const ctx = document.getElementById('timelineChart').getContext('2d');
+      if (timelineChartInstance) timelineChartInstance.destroy();
+
+      timelineChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { type: 'line', label: 'Ánimo', data: recent.map(l => l.mood), borderColor: '#10b981', backgroundColor: '#10b981', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { type: 'line', label: 'Sueño', data: recent.map(l => l.sleep), borderColor: '#38bdf8', backgroundColor: '#38bdf8', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { type: 'line', label: 'Ansiedad', data: recent.map(l => l.anxiety), borderColor: '#f59e0b', backgroundColor: '#f59e0b', borderDash: [4, 4], borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { type: 'bar', label: '% Hábitos', data: recent.map(l => l.habitRate), backgroundColor: '#33415590', borderColor: '#64748b', borderWidth: 1, borderRadius: 4, yAxisID: 'y1' }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            y: { min: 0, max: 10, position: 'left', ticks: { stepSize: 2, color: '#94a3b8' }, grid: { color: '#33415540' } },
+            y1: { min: 0, max: 100, position: 'right', ticks: { callback: v => v + '%', color: '#64748b' }, grid: { display: false } },
+            x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } }
+          },
+          plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 11 } } } }
+        }
+      });
+    }
+
+    function updateContrastEngine() {
+      const groups = {};
+      clinicalLogs.forEach(log => {
+        if (!groups[log.regimen]) {
+          groups[log.regimen] = { count: 0, mood: 0, sleep: 0, anxiety: 0, obsessions: 0, rumination: 0, emotionsFreq: {}, sideEffectsFreq: {} };
+        }
+        const g = groups[log.regimen];
+        g.count++;
+        g.mood += log.mood; g.sleep += log.sleep; g.anxiety += log.anxiety; g.obsessions += log.obsessions; g.rumination += log.rumination;
+        (log.emotions || []).forEach(em => { g.emotionsFreq[em] = (g.emotionsFreq[em] || 0) + 1; });
+        (log.sideEffects || []).forEach(se => { g.sideEffectsFreq[se] = (g.sideEffectsFreq[se] || 0) + 1; });
+      });
+
+      const averages = Object.keys(groups).map(name => {
+        const g = groups[name];
+        const topEmotions = Object.entries(g.emotionsFreq).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, c]) => `${n} (${c})`).join(', ') || 'Sin especificar';
+        const topSE = Object.entries(g.sideEffectsFreq).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([n, c]) => `${n} (${c})`).join(', ') || 'Ninguno';
+        return {
+          name, count: g.count,
+          mood: +(g.mood / g.count).toFixed(1), sleep: +(g.sleep / g.count).toFixed(1),
+          anxiety: +(g.anxiety / g.count).toFixed(1), obsessions: +(g.obsessions / g.count).toFixed(1),
+          rumination: +(g.rumination / g.count).toFixed(1), topEmotions, topSideEffects: topSE
+        };
+      });
+
+      const tbody = document.getElementById('contrastTableBody');
+      tbody.innerHTML = averages.length === 0
+        ? '<tr><td colspan="9" class="py-4 text-center text-slate-500 italic">Guarda al menos un registro diario.</td></tr>'
+        : averages.map(a => `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-2.5 pr-2 font-semibold text-white">${a.name}</td>
+            <td class="py-2.5 px-1 text-center text-slate-400">${a.count}d</td>
+            <td class="py-2.5 px-1 text-center font-bold text-emerald-400">${a.mood}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-sky-400">${a.sleep}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-amber-400">${a.anxiety}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-rose-400">${a.obsessions}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-purple-400">${a.rumination}</td>
+            <td class="py-2.5 pl-2 text-[11px] text-indigo-300">${a.topEmotions}</td>
+            <td class="py-2.5 pl-2 text-[11px] text-amber-300/90">${a.topSideEffects}</td>
+          </tr>
+        `).join('');
+
+      const ctx = document.getElementById('contrastChart').getContext('2d');
+      if (contrastChartInstance) contrastChartInstance.destroy();
+      contrastChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: averages.map(a => `${a.name} (${a.count}d)`),
+          datasets: [
+            { label: 'Ánimo ↑', data: averages.map(a => a.mood), backgroundColor: '#10b981' },
+            { label: 'Sueño ↑', data: averages.map(a => a.sleep), backgroundColor: '#38bdf8' },
+            { label: 'Ansiedad ↓', data: averages.map(a => a.anxiety), backgroundColor: '#f59e0b' },
+            { label: 'Obsesiones ↓', data: averages.map(a => a.obsessions), backgroundColor: '#f43f5e' },
+            { label: 'Rumiación ↓', data: averages.map(a => a.rumination), backgroundColor: '#a855f7' }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true, max: 10, ticks: { stepSize: 2, color: '#94a3b8' }, grid: { color: '#33415540' } },
+            x: { ticks: { color: '#e2e8f0', font: { size: 10 } }, grid: { display: false } }
+          },
+          plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 11 } } } }
+        }
+      });
+    }
+
+    function getImpactBadgeColor(impact) {
+      if (!impact) return 'bg-slate-800 text-slate-400 border-slate-700';
+      if (impact.includes('Arruinó')) return 'bg-rose-950/80 text-rose-300 border-rose-700/60';
+      if (impact.includes('estrés') || impact.includes('ansiedad')) return 'bg-amber-950/80 text-amber-300 border-amber-700/60';
+      if (impact.includes('Mejoró')) return 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60';
+      return 'bg-slate-800 text-slate-300 border-slate-700';
+    }
+
+    function renderClinicalHistory() {
+      const container = document.getElementById('clinicalHistoryList');
+      const summaryBar = document.getElementById('filterSummaryBar');
+
+      const searchQuery = (document.getElementById('filterSearchInput')?.value || '').trim().toLowerCase();
+      const emotionFilter = document.getElementById('filterEmotionSelect')?.value || 'ALL';
+      const impactFilter = document.getElementById('filterImpactSelect')?.value || 'ALL';
+      const regimenFilter = document.getElementById('filterRegimenSelect')?.value || 'ALL';
+
+      const filteredLogs = clinicalLogs.filter(log => {
+        if (emotionFilter !== 'ALL' && !(log.emotions || []).includes(emotionFilter)) return false;
+        if (impactFilter !== 'ALL' && log.eventImpact !== impactFilter) return false;
+        if (regimenFilter !== 'ALL' && log.regimen !== regimenFilter) return false;
+        if (searchQuery) {
+          const searchableText = [log.date, log.dayName, log.regimen, log.eventText, log.eventImpact, log.note, ...(log.emotions || []), ...(log.triggers || []), ...(log.sideEffects || [])].join(' ').toLowerCase();
+          if (!searchableText.includes(searchQuery)) return false;
+        }
+        return true;
+      });
+
+      if (filteredLogs.length === 0) {
+        summaryBar.innerHTML = `<span class="text-slate-400">0 coincidencias de ${clinicalLogs.length} registros.</span>`;
+        container.innerHTML = '<p class="text-xs text-slate-500 italic col-span-full py-4 text-center">No hay registros que coincidan con los filtros.</p>';
+        return;
+      }
+
+      const avgMood = (filteredLogs.reduce((a, b) => a + b.mood, 0) / filteredLogs.length).toFixed(1);
+      const avgAnx = (filteredLogs.reduce((a, b) => a + b.anxiety, 0) / filteredLogs.length).toFixed(1);
+      const avgRum = (filteredLogs.reduce((a, b) => a + b.rumination, 0) / filteredLogs.length).toFixed(1);
+
+      summaryBar.innerHTML = `
+        <span class="text-slate-300">Mostrando <strong class="text-white">${filteredLogs.length}</strong> de ${clinicalLogs.length} días</span>
+        <div class="flex flex-wrap gap-2.5 text-[11px]">
+          <span class="text-emerald-400 font-semibold">Ánimo: ${avgMood}</span>
+          <span class="text-amber-400 font-semibold">Ansiedad: ${avgAnx}</span>
+          <span class="text-purple-400 font-semibold">Rumiación: ${avgRum}</span>
+        </div>
+      `;
+
+      container.innerHTML = [...filteredLogs].reverse().map(log => {
+        const emotionsHtml = (log.emotions && log.emotions.length > 0)
+          ? `<div class="flex flex-wrap gap-1 mt-2">
+              ${log.emotions.map(em => {
+                const isPos = posEmotions.includes(em);
+                const badgeClass = isPos ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border-rose-500/30';
+                return `<button onclick="filterByEmotionQuick('${em}')" class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badgeClass}">${em}</button>`;
+              }).join('')}
+            </div>` : '';
+
+        const eventHtml = log.eventText
+          ? `<div class="mt-2.5 p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 space-y-1">
+              <div class="flex justify-between items-center gap-1">
+                <span class="text-[10px] font-bold uppercase text-indigo-300">📌 ${log.dayName || 'Evento'}</span>
+                <span class="text-[10px] px-2 py-0.5 rounded border ${getImpactBadgeColor(log.eventImpact)}">${log.eventImpact || ''}</span>
+              </div>
+              <p class="text-xs text-slate-200 leading-relaxed">"${log.eventText}"</p>
+            </div>` : '';
+
+        return `
+          <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between space-y-2">
+            <div>
+              <div class="flex justify-between items-start gap-2">
+                <div>
+                  <span class="text-xs font-bold text-sky-400 bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 rounded block">${log.regimen}</span>
+                  <span class="text-[10px] text-slate-400 mt-1 block">🕒 Toma: ${log.doseTime || '-'} (${log.adherence || 'Registrado'})</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[11px] font-medium text-slate-300">${log.dayName || ''} ${log.date}</span>
+                  <button onclick="deleteLog(${log.id})" class="text-slate-500 hover:text-rose-400 text-xs px-1">✕</button>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-5 gap-1 text-center bg-slate-800/60 rounded-lg p-1.5 mt-2 text-[11px]">
+                <div><span class="text-slate-400 block text-[9px]">Ánimo</span><strong class="text-emerald-400">${log.mood}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Sueño</span><strong class="text-sky-400">${log.sleep}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Ansied.</span><strong class="text-amber-400">${log.anxiety}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Obses.</span><strong class="text-rose-400">${log.obsessions}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Rumiación</span><strong class="text-purple-400">${log.rumination}/10</strong></div>
+              </div>
+
+              ${emotionsHtml}
+              ${eventHtml}
+
+              ${log.sideEffects && log.sideEffects.length > 0 ? `
+                <div class="flex flex-wrap gap-1 mt-2">
+                  ${log.sideEffects.map(se => `<span class="text-[10px] bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30">⚕️ ${se}</span>`).join('')}
+                </div>
+              ` : ''}
+            </div>
+            ${log.note ? `<p class="text-[11px] text-slate-400 border-t border-slate-800/80 pt-1.5 italic">Nota: "${log.note}"</p>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // --- EXPORTACIÓN E IMPORTACIÓN MANUAL ---
+    function exportCSV() {
+      if (clinicalLogs.length === 0) { alert('No hay registros para exportar.'); return; }
+      const headers = ['Fecha', 'Dia_Semana', 'Esquema_Farmacologico', 'Horario_Toma', 'Adherencia', 'Animo_1_10', 'Sueno_1_10', 'Ansiedad_1_10', 'Obsesiones_1_10', 'Rumiacion_1_10', 'Porcentaje_Habitos', 'Estados_Emocionales', 'Evento_Relevante_Del_Dia', 'Impacto_Del_Evento', 'Efectos_Secundarios', 'Disparadores', 'Notas_Clinicas'];
+      const rows = clinicalLogs.map(l => [
+        `"${l.date || ''}"`, `"${l.dayName || ''}"`, `"${(l.regimen || '').replace(/"/g, '""')}"`, `"${l.doseTime || '-'}"`, `"${l.adherence || '-'}"`,
+        l.mood, l.sleep, l.anxiety, l.obsessions, l.rumination, l.habitRate,
+        `"${(l.emotions || []).join('; ').replace(/"/g, '""')}"`, `"${(l.eventText || '').replace(/"/g, '""')}"`, `"${(l.eventImpact || '').replace(/"/g, '""')}"`,
+        `"${(l.sideEffects || []).join('; ').replace(/"/g, '""')}"`, `"${(l.triggers || []).join('; ').replace(/"/g, '""')}"`, `"${(l.note || '').replace(/"/g, '""')}"`
+      ]);
+      const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `reporte_clinico_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    }
+
+    function exportJSON() {
+      const backup = { habits, regimens, activeRegimen, negEmotions, posEmotions, sideEffects, triggers, clinicalLogs };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `backup_panel_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+    }
+
+    function importJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (data.habits) habits = data.habits;
+          if (data.regimens) regimens = data.regimens;
+          if (data.activeRegimen) activeRegimen = data.activeRegimen;
+          if (data.negEmotions) negEmotions = data.negEmotions;
+          if (data.posEmotions) posEmotions = data.posEmotions;
+          if (data.sideEffects) sideEffects = data.sideEffects;
+          if (data.triggers) triggers = data.triggers;
+          if (data.clinicalLogs) clinicalLogs = data.clinicalLogs;
+          saveState();
+          renderRegimens(); renderHabits(); renderEmotions(); renderSideEffects(); renderTriggers(); updateAllAnalytics();
+          alert('Respaldo restaurado correctamente.');
+        } catch (err) { alert('Archivo JSON inválido.'); }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    function clearAllData() {
+      if (!confirm('¿Deseas borrar los datos de demostración para empezar tu registro desde cero?')) return;
+      clinicalLogs = [];
+      habits.forEach(h => h.days = [false, false, false, false, false, false, false]);
+      regimens = ['Sin medicación'];
+      activeRegimen = 'Sin medicación';
+      saveState();
+      renderRegimens(); renderHabits(); updateAllAnalytics();
+    }
+
+    // Inicializar
+    updateCloudBadge();
+    renderRegimens();
+    renderHabits();
+    renderEmotions();
+    renderSideEffects();
+    renderTriggers();
+    updateSliderLabels();
+    updateAllAnalytics();
+    if (cloudUrl) syncFromCloud(false);
+  </script>
+</body>
+</html>
