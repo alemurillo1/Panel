@@ -503,4 +503,1116 @@
     const defaultHabits = [
       { id: 1, name: 'Lectura / Estudio enfocado', days: [true, true, true, false, true, false, false] },
       { id: 2, name: 'Actividad física / Caminata', days: [true, false, true, true, false, true, false] },
-      { id: 3, name: 'Higiene del sueño (sin pantallas)',
+      { id: 3, name: 'Higiene del sueño (sin pantallas)', days: [true, true, false, true, true, false, false] },
+      { id: 4, name: 'Práctica de descarga / Respiración', days: [false, true, true, true, false, false, false] }
+    ];
+
+    const defaultRegimens = [
+      'Sin medicación',
+      'Esquema A (ISRS dosis inicial)',
+      'Esquema B (Ajuste de dosis / Combinado)'
+    ];
+
+    const defaultNegEmotions = ['Angustiado', 'Nervioso', 'Estresado', 'Ansioso', 'Irritable', 'Desganado'];
+    const defaultPosEmotions = ['Contento', 'Feliz', 'Motivado', 'Animado', 'Eufórico', 'En calma'];
+    const defaultSideEffects = ['Sin efectos adversos', 'Somnolencia diurna', 'Cefalea', 'Sequedad bucal', 'Cambios en el apetito', 'Molestia gastrointestinal', 'Fatiga física'];
+    const defaultTriggers = ['Problemas laborales', 'Llamadas / Spam molesto', 'Sueño fragmentado', 'Exceso de cafeína', 'Ejercicio físico', 'Tiempo libre de calidad'];
+
+    const defaultLogs = [];
+
+    let habits = JSON.parse(localStorage.getItem('hc_habits_v5')) || defaultHabits;
+    let regimens = JSON.parse(localStorage.getItem('hc_regimens_v5')) || defaultRegimens;
+    let activeRegimen = localStorage.getItem('hc_activeRegimen_v5') || regimens[regimens.length - 1];
+    let negEmotions = JSON.parse(localStorage.getItem('hc_negEmotions_v5')) || defaultNegEmotions;
+    let posEmotions = JSON.parse(localStorage.getItem('hc_posEmotions_v5')) || defaultPosEmotions;
+    let sideEffects = JSON.parse(localStorage.getItem('hc_sideEffects_v5')) || defaultSideEffects;
+    let triggers = JSON.parse(localStorage.getItem('hc_triggers_v5')) || defaultTriggers;
+    let clinicalLogs = JSON.parse(localStorage.getItem('hc_logs_v5')) || defaultLogs;
+
+    // 1. HORARIO PERSISTENTE DE TOMA
+    function resolveInitialDoseTime() {
+      const savedTime = localStorage.getItem('hc_lastDoseTime_v5');
+      if (savedTime) return savedTime;
+      for (let i = clinicalLogs.length - 1; i >= 0; i--) {
+        if (clinicalLogs[i].doseTime && clinicalLogs[i].doseTime !== '-') {
+          return clinicalLogs[i].doseTime;
+        }
+      }
+      return '08:30';
+    }
+    let lastDoseTime = resolveInitialDoseTime();
+
+    let cloudUrl = localStorage.getItem('hc_cloud_url') || '';
+    let cloudUserKey = localStorage.getItem('hc_cloud_key') || 'panel_principal';
+
+    let selectedEmotions = new Set();
+    let selectedSideEffects = new Set();
+    let selectedTriggers = new Set();
+    let timelineChartInstance = null;
+    let contrastChartInstance = null;
+    let editingLogId = null;
+
+    // --- 2. GESTIÓN SINCRONIZADA DE FECHA Y DÍA DE LA SEMANA ---
+    function toLocalISODate(d) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    function parseLocalISODate(isoStr) {
+      if (!isoStr) return new Date();
+      const [y, m, d] = isoStr.split('-').map(Number);
+      return new Date(y, m - 1, d, 12, 0, 0);
+    }
+
+    function getDayIdxFromDate(dateObj) {
+      const jsDay = dateObj.getDay();
+      return jsDay === 0 ? 6 : jsDay - 1;
+    }
+
+    function formatShortDateES(dateObj) {
+      return dateObj.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+    }
+
+    // Infiere la fecha YYYY-MM-DD de registros anteriores que aún no tenían isoDate
+    function inferISODateFromLog(log) {
+      if (log.isoDate) return log.isoDate;
+      const monthMap = {
+        ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5,
+        jul: 6, ago: 7, sep: 8, set: 8, oct: 9, nov: 10, dic: 11
+      };
+      const baseYear = (typeof log.id === 'number' && log.id > 1600000000000)
+        ? new Date(log.id).getFullYear()
+        : new Date().getFullYear();
+
+      if (log.date) {
+        const clean = log.date.toLowerCase().replace(/\./g, '').trim();
+        const match = clean.match(/(\d{1,2})\s+([a-záéíóú]{3})/);
+        if (match) {
+          const dayNum = parseInt(match[1], 10);
+          const monKey = match[2].slice(0, 3);
+          if (monthMap[monKey] !== undefined) {
+            return toLocalISODate(new Date(baseYear, monthMap[monKey], dayNum, 12, 0, 0));
+          }
+        }
+      }
+      if (typeof log.id === 'number' && log.id > 1600000000000) {
+        return toLocalISODate(new Date(log.id));
+      }
+      return toLocalISODate(new Date());
+    }
+
+    function syncDateAndDayUI(dateObj) {
+      const iso = toLocalISODate(dateObj);
+      const dayIdx = getDayIdxFromDate(dateObj);
+      const dayName = DAYS[dayIdx];
+      const shortDate = formatShortDateES(dateObj);
+
+      document.getElementById('logDateInput').value = iso;
+      document.getElementById('currentDayIndex').value = dayIdx;
+      document.getElementById('formattedDatePreview').textContent = `${dayName}, ${shortDate}`;
+      updateLiveScorePreview();
+    }
+
+    function setLogDateToday() {
+      syncDateAndDayUI(new Date());
+    }
+
+    function shiftLogDate(deltaDays) {
+      const currentIso = document.getElementById('logDateInput').value;
+      const d = parseLocalISODate(currentIso);
+      d.setDate(d.getDate() + deltaDays);
+      syncDateAndDayUI(d);
+    }
+
+    function onDateInputChange() {
+      const currentIso = document.getElementById('logDateInput').value;
+      if (!currentIso) return;
+      syncDateAndDayUI(parseLocalISODate(currentIso));
+    }
+
+    function onDayDropdownChange() {
+      const targetDayIdx = parseInt(document.getElementById('currentDayIndex').value, 10);
+      const currentIso = document.getElementById('logDateInput').value;
+      const d = parseLocalISODate(currentIso);
+      const currentDayIdx = getDayIdxFromDate(d);
+      let diff = targetDayIdx - currentDayIdx;
+      if (diff > 1) diff -= 7;
+      d.setDate(d.getDate() + diff);
+      syncDateAndDayUI(d);
+    }
+
+    function onDoseTimeChange() {
+      const val = document.getElementById('doseTimeInput').value;
+      if (val) {
+        lastDoseTime = val;
+        localStorage.setItem('hc_lastDoseTime_v5', lastDoseTime);
+        saveState();
+      }
+    }
+
+    // --- 3. CÁLCULO DE PUNTUACIÓN DE CALIDAD DEL DÍA (0 a 100) ---
+    function calculateDayScore(entry) {
+      if (typeof entry.dayScore === 'number' && !isNaN(entry.dayScore)) {
+        return entry.dayScore;
+      }
+      const moodNorm = ((entry.mood || 5) - 1) / 9;
+      const sleepNorm = ((entry.sleep || 5) - 1) / 9;
+      const anxNorm = (10 - (entry.anxiety || 5)) / 9;
+      const obsNorm = (10 - (entry.obsessions || 5)) / 9;
+      const rumNorm = (10 - (entry.rumination || 5)) / 9;
+
+      const clinicalAvg = (moodNorm + sleepNorm + anxNorm + obsNorm + rumNorm) / 5;
+      const hasHabits = typeof entry.habitRate === 'number' && habits.length > 0;
+      const habitNorm = hasHabits ? (entry.habitRate / 100) : clinicalAvg;
+
+      let rawScore = (clinicalAvg * 0.85 + habitNorm * 0.15) * 100;
+
+      if (entry.eventImpact) {
+        if (entry.eventImpact.includes('Arruinó')) rawScore -= 5;
+        else if (entry.eventImpact.includes('estrés') || entry.eventImpact.includes('ansiedad')) rawScore -= 2;
+        else if (entry.eventImpact.includes('Mejoró')) rawScore += 4;
+      }
+
+      return Math.max(0, Math.min(100, Math.round(rawScore)));
+    }
+
+    function getScoreStyle(score) {
+      if (score >= 80) return { label: 'Excelente', textClass: 'text-emerald-400', barClass: 'bg-emerald-500', badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' };
+      if (score >= 60) return { label: 'Bueno / Estable', textClass: 'text-sky-400', barClass: 'bg-sky-500', badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40' };
+      if (score >= 40) return { label: 'Regular', textClass: 'text-amber-400', barClass: 'bg-amber-500', badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' };
+      return { label: 'Día difícil', textClass: 'text-rose-400', barClass: 'bg-rose-500', badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' };
+    }
+
+    function updateLiveScorePreview() {
+      const dayIdx = parseInt(document.getElementById('currentDayIndex')?.value || 0, 10);
+      const completedToday = habits.reduce((acc, h) => acc + (h.days[dayIdx] ? 1 : 0), 0);
+      const habitRate = habits.length > 0 ? Math.round((completedToday / habits.length) * 100) : 0;
+      const eventText = document.getElementById('dailyEventText')?.value.trim() || '';
+      const eventImpact = document.getElementById('dailyEventImpact')?.value || 'Sin evento puntual hoy';
+
+      const draftEntry = {
+        mood: parseInt(document.getElementById('sliderMood')?.value || 7, 10),
+        sleep: parseInt(document.getElementById('sliderSleep')?.value || 7, 10),
+        anxiety: parseInt(document.getElementById('sliderAnxiety')?.value || 4, 10),
+        obsessions: parseInt(document.getElementById('sliderObsessions')?.value || 3, 10),
+        rumination: parseInt(document.getElementById('sliderRumination')?.value || 4, 10),
+        habitRate: habitRate,
+        eventImpact: eventText ? eventImpact : 'Sin evento puntual hoy'
+      };
+
+      const score = calculateDayScore(draftEntry);
+      const style = getScoreStyle(score);
+
+      const numEl = document.getElementById('liveScoreNumber');
+      const barEl = document.getElementById('liveScoreBar');
+      const statusEl = document.getElementById('liveScoreStatusText');
+
+      if (numEl && barEl && statusEl) {
+        numEl.textContent = score;
+        numEl.className = `text-2xl sm:text-3xl font-extrabold ${style.textClass}`;
+        barEl.className = `${style.barClass} h-full rounded-full transition-all duration-300`;
+        barEl.style.width = `${score}%`;
+        statusEl.textContent = `${style.label} · Hábitos del día: ${habitRate}%`;
+      }
+    }
+
+    // --- NAVEGACIÓN POR PESTAÑAS ---
+    function switchTab(tabName) {
+      ['today', 'habits', 'contrast', 'history', 'cloud'].forEach(t => {
+        document.getElementById(`view-${t}`).classList.toggle('hidden', t !== tabName);
+        document.getElementById(`tab-${t}`).classList.toggle('active', t === tabName);
+      });
+      if (tabName === 'contrast') {
+        updateTimelineChart();
+        updateContrastEngine();
+      } else if (tabName === 'history') {
+        renderClinicalHistory();
+      } else if (tabName === 'today') {
+        updateLiveScorePreview();
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    function saveState(pushCloud = true) {
+      localStorage.setItem('hc_habits_v5', JSON.stringify(habits));
+      localStorage.setItem('hc_regimens_v5', JSON.stringify(regimens));
+      localStorage.setItem('hc_activeRegimen_v5', activeRegimen);
+      localStorage.setItem('hc_negEmotions_v5', JSON.stringify(negEmotions));
+      localStorage.setItem('hc_posEmotions_v5', JSON.stringify(posEmotions));
+      localStorage.setItem('hc_sideEffects_v5', JSON.stringify(sideEffects));
+      localStorage.setItem('hc_triggers_v5', JSON.stringify(triggers));
+      localStorage.setItem('hc_logs_v5', JSON.stringify(clinicalLogs));
+      localStorage.setItem('hc_lastDoseTime_v5', lastDoseTime);
+      if (pushCloud && cloudUrl) {
+        syncToCloud(false);
+      }
+    }
+
+    // --- SINCRONIZACIÓN EN LA NUBE (FIREBASE REST) ---
+    function updateCloudBadge() {
+      const badge = document.getElementById('cloudStatusBadge');
+      const btnQuick = document.getElementById('btnQuickSync');
+      document.getElementById('cloudUrlInput').value = cloudUrl;
+      document.getElementById('cloudUserKeyInput').value = cloudUserKey;
+
+      if (cloudUrl) {
+        badge.innerHTML = '<span>☁️</span> <span class="text-emerald-400">Nube Activa</span>';
+        badge.className = 'text-[11px] font-medium px-2.5 py-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/40 text-emerald-300 flex items-center gap-1.5';
+        btnQuick.classList.remove('hidden');
+      } else {
+        badge.innerHTML = '<span>📱</span> <span>Solo Local</span>';
+        badge.className = 'text-[11px] font-medium px-2.5 py-1.5 rounded-full border border-slate-700 bg-slate-800 text-slate-300 flex items-center gap-1.5';
+        btnQuick.classList.add('hidden');
+      }
+    }
+
+    function getCleanEndpoint() {
+      const base = cloudUrl.trim().replace(/\/$/, '');
+      const key = (cloudUserKey.trim() || 'panel_principal').replace(/[^a-zA-Z0-9_-]/g, '_');
+      return `${base}/${key}.json`;
+    }
+
+    async function saveCloudConfig() {
+      cloudUrl = document.getElementById('cloudUrlInput').value.trim();
+      cloudUserKey = document.getElementById('cloudUserKeyInput').value.trim() || 'panel_principal';
+      localStorage.setItem('hc_cloud_url', cloudUrl);
+      localStorage.setItem('hc_cloud_key', cloudUserKey);
+      updateCloudBadge();
+      if (cloudUrl) {
+        await syncFromCloud(true);
+      }
+    }
+
+    async function syncToCloud(showMsg = false) {
+      if (!cloudUrl) return;
+      const msgEl = document.getElementById('cloudFeedbackMsg');
+      try {
+        const payload = {
+          habits, regimens, activeRegimen, negEmotions, posEmotions,
+          sideEffects, triggers, clinicalLogs, lastDoseTime,
+          updatedAt: new Date().toISOString()
+        };
+        const res = await fetch(getCleanEndpoint(), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok && showMsg) {
+          msgEl.textContent = '✅ Datos subidos y sincronizados correctamente en la nube.';
+          msgEl.className = 'text-[11px] text-emerald-400 pt-1';
+        }
+      } catch (e) {
+        if (showMsg) {
+          msgEl.textContent = '❌ Error al subir a la nube. Verifica la URL de Firebase.';
+          msgEl.className = 'text-[11px] text-rose-400 pt-1';
+        }
+      }
+    }
+
+    async function syncFromCloud(showMsg = false) {
+      if (!cloudUrl) return;
+      const msgEl = document.getElementById('cloudFeedbackMsg');
+      try {
+        const res = await fetch(getCleanEndpoint());
+        if (!res.ok) throw new Error('Error HTTP');
+        const data = await res.json();
+        if (data) {
+          if (data.habits) habits = data.habits;
+          if (data.regimens) regimens = data.regimens;
+          if (data.activeRegimen) activeRegimen = data.activeRegimen;
+          if (data.negEmotions) negEmotions = data.negEmotions;
+          if (data.posEmotions) posEmotions = data.posEmotions;
+          if (data.sideEffects) sideEffects = data.sideEffects;
+          if (data.triggers) triggers = data.triggers;
+          if (data.clinicalLogs) clinicalLogs = data.clinicalLogs;
+          if (data.lastDoseTime) {
+            lastDoseTime = data.lastDoseTime;
+          } else {
+            lastDoseTime = resolveInitialDoseTime();
+          }
+          document.getElementById('doseTimeInput').value = lastDoseTime;
+          saveState(false);
+          renderRegimens();
+          renderHabits();
+          renderEmotions();
+          renderSideEffects();
+          renderTriggers();
+          updateAllAnalytics();
+          if (showMsg) {
+            msgEl.textContent = '✅ Datos descargados de la nube y actualizados en este dispositivo.';
+            msgEl.className = 'text-[11px] text-emerald-400 pt-1';
+          }
+        } else {
+          await syncToCloud(showMsg);
+        }
+      } catch (e) {
+        if (showMsg) {
+          msgEl.textContent = '❌ No se pudo conectar. Verifica tu URL de Firebase y las reglas (.read/.write: true).';
+          msgEl.className = 'text-[11px] text-rose-400 pt-1';
+        }
+      }
+    }
+
+    // --- ESQUEMAS FARMACOLÓGICOS ---
+    function renderRegimens() {
+      const select = document.getElementById('activeRegimenSelect');
+      select.innerHTML = regimens.map(r => `<option value="${r}" ${r === activeRegimen ? 'selected' : ''}>${r}</option>`).join('');
+      syncAdherenceWithRegimen();
+      populateFilterDropdowns();
+    }
+
+    function syncAdherenceWithRegimen() {
+      const adhSelect = document.getElementById('doseAdherenceSelect');
+      if (activeRegimen.toLowerCase().includes('sin medicación')) {
+        adhSelect.value = 'No aplica (Sin medicación)';
+      } else if (adhSelect.value === 'No aplica (Sin medicación)') {
+        adhSelect.value = 'En horario';
+      }
+    }
+
+    function changeActiveRegimen() {
+      activeRegimen = document.getElementById('activeRegimenSelect').value;
+      syncAdherenceWithRegimen();
+      saveState();
+    }
+
+    function addRegimen() {
+      const input = document.getElementById('newRegimenInput');
+      const val = input.value.trim();
+      if (!val) return;
+      if (!regimens.includes(val)) regimens.push(val);
+      activeRegimen = val;
+      input.value = '';
+      saveState();
+      renderRegimens();
+    }
+
+    // --- HÁBITOS TÁCTILES PARA CELULAR ---
+    function calculateStreak(daysArray) {
+      let current = 0, max = 0;
+      for (let c of daysArray) {
+        if (c) { current++; if (current > max) max = current; }
+        else { current = 0; }
+      }
+      return max;
+    }
+
+    function renderHabits() {
+      const container = document.getElementById('habitsMobileList');
+      container.innerHTML = '';
+      let totalChecks = 0, bestStreakOverall = 0;
+
+      habits.forEach((h, hIndex) => {
+        const streak = calculateStreak(h.days);
+        if (streak > bestStreakOverall) bestStreakOverall = streak;
+        totalChecks += h.days.filter(Boolean).length;
+
+        const daysButtons = h.days.map((checked, dIndex) => `
+          <button onclick="toggleDay(${hIndex}, ${dIndex})" 
+                  class="w-9 h-9 sm:w-10 sm:h-10 rounded-full text-xs font-bold border transition flex items-center justify-center ${
+                    checked 
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm' 
+                      : 'bg-slate-800/90 text-slate-400 border-slate-700 hover:border-slate-500'
+                  }">
+            ${DAY_INITIALS[dIndex]}
+          </button>
+        `).join('');
+
+        const card = document.createElement('div');
+        card.className = 'bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 space-y-2.5';
+        card.innerHTML = `
+          <div class="flex justify-between items-center gap-2">
+            <span class="font-semibold text-slate-100 text-xs sm:text-sm">${h.name}</span>
+            <div class="flex items-center gap-2">
+              <span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${streak >= 3 ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-300'}">🔥 ${streak}d</span>
+              <button onclick="deleteHabit(${hIndex})" class="text-slate-500 hover:text-rose-400 text-xs px-1">✕</button>
+            </div>
+          </div>
+          <div class="flex justify-between items-center gap-1 pt-1">
+            ${daysButtons}
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      const totalPossible = habits.length * 7;
+      const rate = totalPossible > 0 ? Math.round((totalChecks / totalPossible) * 100) : 0;
+      document.getElementById('globalRate').textContent = `${rate}%`;
+      document.getElementById('bestStreak').textContent = `${bestStreakOverall} días`;
+      updateLiveScorePreview();
+    }
+
+    function toggleDay(hIndex, dIndex) {
+      habits[hIndex].days[dIndex] = !habits[hIndex].days[dIndex];
+      saveState();
+      renderHabits();
+    }
+
+    function addHabit() {
+      const input = document.getElementById('newHabitInput');
+      const name = input.value.trim();
+      if (!name) return;
+      habits.push({ id: Date.now(), name, days: [false, false, false, false, false, false, false] });
+      input.value = '';
+      saveState();
+      renderHabits();
+    }
+
+    function deleteHabit(index) {
+      habits.splice(index, 1);
+      saveState();
+      renderHabits();
+    }
+
+    function resetWeek() {
+      habits.forEach(h => h.days = [false, false, false, false, false, false, false]);
+      saveState();
+      renderHabits();
+    }
+
+    // --- SLIDERS, EMOCIONES, EFECTOS Y DISPARADORES ---
+    function updateSliderLabels() {
+      document.getElementById('valMood').textContent = document.getElementById('sliderMood').value + '/10';
+      document.getElementById('valSleep').textContent = document.getElementById('sliderSleep').value + '/10';
+      document.getElementById('valAnxiety').textContent = document.getElementById('sliderAnxiety').value + '/10';
+      document.getElementById('valObsessions').textContent = document.getElementById('sliderObsessions').value + '/10';
+      document.getElementById('valRumination').textContent = document.getElementById('sliderRumination').value + '/10';
+      updateLiveScorePreview();
+    }
+
+    function renderEmotions() {
+      const negContainer = document.getElementById('negEmotionsContainer');
+      const posContainer = document.getElementById('posEmotionsContainer');
+      negContainer.innerHTML = '';
+      posContainer.innerHTML = '';
+
+      negEmotions.forEach(em => {
+        const isActive = selectedEmotions.has(em);
+        const btn = document.createElement('button');
+        btn.className = `emotion-neg text-xs px-3 py-1.5 rounded-full border border-rose-800/60 text-rose-200 transition ${isActive ? 'active' : 'bg-rose-950/30'}`;
+        btn.textContent = em;
+        btn.onclick = () => {
+          if (selectedEmotions.has(em)) selectedEmotions.delete(em);
+          else selectedEmotions.add(em);
+          renderEmotions();
+        };
+        negContainer.appendChild(btn);
+      });
+
+      posEmotions.forEach(em => {
+        const isActive = selectedEmotions.has(em);
+        const btn = document.createElement('button');
+        btn.className = `emotion-pos text-xs px-3 py-1.5 rounded-full border border-emerald-800/60 text-emerald-200 transition ${isActive ? 'active' : 'bg-emerald-950/30'}`;
+        btn.textContent = em;
+        btn.onclick = () => {
+          if (selectedEmotions.has(em)) selectedEmotions.delete(em);
+          else selectedEmotions.add(em);
+          renderEmotions();
+        };
+        posContainer.appendChild(btn);
+      });
+
+      populateFilterDropdowns();
+    }
+
+    function addCustomEmotion() {
+      const input = document.getElementById('customEmotionInput');
+      const type = document.getElementById('customEmotionType').value;
+      const val = input.value.trim();
+      if (!val) return;
+      if (type === 'neg' && !negEmotions.includes(val)) negEmotions.push(val);
+      else if (type === 'pos' && !posEmotions.includes(val)) posEmotions.push(val);
+      selectedEmotions.add(val);
+      input.value = '';
+      saveState();
+      renderEmotions();
+    }
+
+    function renderSideEffects() {
+      const container = document.getElementById('sideEffectContainer');
+      container.innerHTML = '';
+      sideEffects.forEach(se => {
+        const isActive = selectedSideEffects.has(se);
+        const btn = document.createElement('button');
+        btn.className = `sideeffect-chip text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 transition ${isActive ? 'active' : 'bg-slate-800/60'}`;
+        btn.textContent = se;
+        btn.onclick = () => {
+          if (selectedSideEffects.has(se)) selectedSideEffects.delete(se);
+          else selectedSideEffects.add(se);
+          renderSideEffects();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function addCustomSideEffect() {
+      const input = document.getElementById('customSideEffectInput');
+      const val = input.value.trim();
+      if (val && !sideEffects.includes(val)) {
+        sideEffects.push(val);
+        selectedSideEffects.add(val);
+        input.value = '';
+        saveState();
+        renderSideEffects();
+      }
+    }
+
+    function renderTriggers() {
+      const container = document.getElementById('triggerContainer');
+      container.innerHTML = '';
+      triggers.forEach(t => {
+        const isActive = selectedTriggers.has(t);
+        const btn = document.createElement('button');
+        btn.className = `trigger-chip text-xs px-2.5 py-1 rounded-full border border-slate-700 text-slate-300 transition ${isActive ? 'active' : 'bg-slate-800/60'}`;
+        btn.textContent = t;
+        btn.onclick = () => {
+          if (selectedTriggers.has(t)) selectedTriggers.delete(t);
+          else selectedTriggers.add(t);
+          renderTriggers();
+        };
+        container.appendChild(btn);
+      });
+    }
+
+    function addCustomTrigger() {
+      const input = document.getElementById('customTriggerInput');
+      const val = input.value.trim();
+      if (val && !triggers.includes(val)) {
+        triggers.push(val);
+        selectedTriggers.add(val);
+        input.value = '';
+        saveState();
+        renderTriggers();
+      }
+    }
+
+    // --- GUARDAR REGISTRO DIARIO ---
+    function saveDailyClinicalLog() {
+      const selectedIso = document.getElementById('logDateInput').value;
+      const chosenDateObj = parseLocalISODate(selectedIso);
+      const dayIdx = getDayIdxFromDate(chosenDateObj);
+      const dayName = DAYS[dayIdx];
+      const dateStr = formatShortDateES(chosenDateObj);
+
+      const completedToday = habits.reduce((acc, h) => acc + (h.days[dayIdx] ? 1 : 0), 0);
+      const habitRate = habits.length > 0 ? Math.round((completedToday / habits.length) * 100) : 0;
+
+      const adherence = document.getElementById('doseAdherenceSelect').value;
+      const rawTime = document.getElementById('doseTimeInput').value;
+      if (rawTime) {
+        lastDoseTime = rawTime;
+        localStorage.setItem('hc_lastDoseTime_v5', lastDoseTime);
+      }
+      const doseTime = adherence.includes('No aplica') ? '-' : (rawTime || lastDoseTime || '-');
+
+      const eventText = document.getElementById('dailyEventText').value.trim();
+      const eventImpact = document.getElementById('dailyEventImpact').value;
+
+      const newEntry = {
+        id: Date.now(),
+        isoDate: selectedIso,
+        date: dateStr,
+        dayName: dayName,
+        regimen: activeRegimen,
+        doseTime: doseTime,
+        adherence: adherence,
+        mood: parseInt(document.getElementById('sliderMood').value, 10),
+        sleep: parseInt(document.getElementById('sliderSleep').value, 10),
+        anxiety: parseInt(document.getElementById('sliderAnxiety').value, 10),
+        obsessions: parseInt(document.getElementById('sliderObsessions').value, 10),
+        rumination: parseInt(document.getElementById('sliderRumination').value, 10),
+        habitRate: habitRate,
+        emotions: Array.from(selectedEmotions),
+        eventText: eventText,
+        eventImpact: eventText ? eventImpact : 'Sin evento puntual hoy',
+        sideEffects: Array.from(selectedSideEffects),
+        triggers: Array.from(selectedTriggers),
+        note: document.getElementById('mentalNote').value.trim()
+      };
+
+      newEntry.dayScore = calculateDayScore(newEntry);
+
+      clinicalLogs.push(newEntry);
+      selectedEmotions.clear();
+      selectedSideEffects.clear();
+      selectedTriggers.clear();
+      document.getElementById('dailyEventText').value = '';
+      document.getElementById('mentalNote').value = '';
+
+      saveState();
+      renderEmotions();
+      renderSideEffects();
+      renderTriggers();
+      updateAllAnalytics();
+      switchTab('history');
+    }
+
+    function deleteLog(id) {
+      if (!confirm('¿Eliminar este registro de la bitácora?')) return;
+      clinicalLogs = clinicalLogs.filter(l => l.id !== id);
+      saveState();
+      updateAllAnalytics();
+    }
+
+    // --- 4. EDICIÓN RÁPIDA DE FECHA Y DATOS EN TARJETAS DE LA BITÁCORA ---
+    function toggleEditLog(id) {
+      editingLogId = (editingLogId === id) ? null : id;
+      renderClinicalHistory();
+    }
+
+    function shiftCardEditDate(id, deltaDays) {
+      const input = document.getElementById(`editDate_${id}`);
+      if (!input) return;
+      const d = parseLocalISODate(input.value);
+      d.setDate(d.getDate() + deltaDays);
+      input.value = toLocalISODate(d);
+      updateCardEditPreview(id);
+    }
+
+    function updateCardEditPreview(id) {
+      const input = document.getElementById(`editDate_${id}`);
+      const preview = document.getElementById(`editPreview_${id}`);
+      if (!input || !preview) return;
+      const d = parseLocalISODate(input.value);
+      const dayName = DAYS[getDayIdxFromDate(d)];
+      const shortDate = formatShortDateES(d);
+      preview.textContent = `${dayName}, ${shortDate}`;
+    }
+
+    function saveCardEdit(id) {
+      const idx = clinicalLogs.findIndex(l => l.id === id);
+      if (idx === -1) return;
+
+      const dateInput = document.getElementById(`editDate_${id}`);
+      const timeInput = document.getElementById(`editTime_${id}`);
+      const eventInput = document.getElementById(`editEvent_${id}`);
+      const noteInput = document.getElementById(`editNote_${id}`);
+
+      if (dateInput && dateInput.value) {
+        const d = parseLocalISODate(dateInput.value);
+        clinicalLogs[idx].isoDate = dateInput.value;
+        clinicalLogs[idx].dayName = DAYS[getDayIdxFromDate(d)];
+        clinicalLogs[idx].date = formatShortDateES(d);
+      }
+
+      if (timeInput) {
+        const val = timeInput.value.trim();
+        clinicalLogs[idx].doseTime = val || '-';
+      }
+
+      if (eventInput) {
+        clinicalLogs[idx].eventText = eventInput.value.trim();
+      }
+
+      if (noteInput) {
+        clinicalLogs[idx].note = noteInput.value.trim();
+      }
+
+      delete clinicalLogs[idx].dayScore;
+      clinicalLogs[idx].dayScore = calculateDayScore(clinicalLogs[idx]);
+
+      editingLogId = null;
+      saveState();
+      updateAllAnalytics();
+    }
+
+    // --- FILTROS Y ANALÍTICA ---
+    function populateFilterDropdowns() {
+      const emotionSelect = document.getElementById('filterEmotionSelect');
+      const currentEm = emotionSelect ? emotionSelect.value : 'ALL';
+      if (emotionSelect) {
+        emotionSelect.innerHTML = `<option value="ALL">Todas las emociones</option>` +
+          `<optgroup label="Tensión / Malestar">` +
+          negEmotions.map(e => `<option value="${e}">${e}</option>`).join('') +
+          `</optgroup><optgroup label="Bienestar / Ánimo Elevado">` +
+          posEmotions.map(e => `<option value="${e}">${e}</option>`).join('') +
+          `</optgroup>`;
+        emotionSelect.value = [...negEmotions, ...posEmotions].includes(currentEm) ? currentEm : 'ALL';
+      }
+
+      const regimenSelect = document.getElementById('filterRegimenSelect');
+      const currentReg = regimenSelect ? regimenSelect.value : 'ALL';
+      if (regimenSelect) {
+        regimenSelect.innerHTML = `<option value="ALL">Todos los esquemas</option>` +
+          regimens.map(r => `<option value="${r}">${r}</option>`).join('');
+        regimenSelect.value = regimens.includes(currentReg) ? currentReg : 'ALL';
+      }
+    }
+
+    function resetHistoryFilters() {
+      document.getElementById('filterSearchInput').value = '';
+      document.getElementById('filterEmotionSelect').value = 'ALL';
+      document.getElementById('filterImpactSelect').value = 'ALL';
+      document.getElementById('filterRegimenSelect').value = 'ALL';
+      renderClinicalHistory();
+    }
+
+    function filterByEmotionQuick(emotionName) {
+      document.getElementById('filterEmotionSelect').value = emotionName;
+      switchTab('history');
+    }
+
+    function updateAllAnalytics() {
+      populateFilterDropdowns();
+      updateTimelineChart();
+      updateContrastEngine();
+      renderClinicalHistory();
+      updateLiveScorePreview();
+    }
+
+    function updateTimelineChart() {
+      const recent = clinicalLogs.slice(-10);
+      const labels = recent.map(l => `${l.dayName ? l.dayName.slice(0,3) : ''} ${l.date}`);
+      const ctx = document.getElementById('timelineChart').getContext('2d');
+      if (timelineChartInstance) timelineChartInstance.destroy();
+
+      timelineChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            { type: 'line', label: 'Ánimo', data: recent.map(l => l.mood), borderColor: '#10b981', backgroundColor: '#10b981', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { type: 'line', label: 'Sueño', data: recent.map(l => l.sleep), borderColor: '#38bdf8', backgroundColor: '#38bdf8', borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { type: 'line', label: 'Ansiedad', data: recent.map(l => l.anxiety), borderColor: '#f59e0b', backgroundColor: '#f59e0b', borderDash: [4, 4], borderWidth: 2, tension: 0.3, yAxisID: 'y' },
+            { type: 'bar', label: 'Puntuación (0-100)', data: recent.map(l => calculateDayScore(l)), backgroundColor: '#38bdf835', borderColor: '#38bdf8', borderWidth: 1, borderRadius: 4, yAxisID: 'y1' }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            y: { min: 0, max: 10, position: 'left', ticks: { stepSize: 2, color: '#94a3b8' }, grid: { color: '#33415540' } },
+            y1: { min: 0, max: 100, position: 'right', ticks: { callback: v => v + ' pts', color: '#64748b' }, grid: { display: false } },
+            x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } }
+          },
+          plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 11 } } } }
+        }
+      });
+    }
+
+    function updateContrastEngine() {
+      const groups = {};
+      clinicalLogs.forEach(log => {
+        if (!groups[log.regimen]) {
+          groups[log.regimen] = { count: 0, score: 0, mood: 0, sleep: 0, anxiety: 0, obsessions: 0, rumination: 0, emotionsFreq: {}, sideEffectsFreq: {} };
+        }
+        const g = groups[log.regimen];
+        g.count++;
+        g.score += calculateDayScore(log);
+        g.mood += log.mood; g.sleep += log.sleep; g.anxiety += log.anxiety; g.obsessions += log.obsessions; g.rumination += log.rumination;
+        (log.emotions || []).forEach(em => { g.emotionsFreq[em] = (g.emotionsFreq[em] || 0) + 1; });
+        (log.sideEffects || []).forEach(se => { g.sideEffectsFreq[se] = (g.sideEffectsFreq[se] || 0) + 1; });
+      });
+
+      const averages = Object.keys(groups).map(name => {
+        const g = groups[name];
+        const topEmotions = Object.entries(g.emotionsFreq).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, c]) => `${n} (${c})`).join(', ') || 'Sin especificar';
+        const topSE = Object.entries(g.sideEffectsFreq).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([n, c]) => `${n} (${c})`).join(', ') || 'Ninguno';
+        return {
+          name, count: g.count,
+          score: Math.round(g.score / g.count),
+          mood: +(g.mood / g.count).toFixed(1), sleep: +(g.sleep / g.count).toFixed(1),
+          anxiety: +(g.anxiety / g.count).toFixed(1), obsessions: +(g.obsessions / g.count).toFixed(1),
+          rumination: +(g.rumination / g.count).toFixed(1), topEmotions, topSideEffects: topSE
+        };
+      });
+
+      const tbody = document.getElementById('contrastTableBody');
+      tbody.innerHTML = averages.length === 0
+        ? '<tr><td colspan="10" class="py-4 text-center text-slate-500 italic">Guarda al menos un registro diario.</td></tr>'
+        : averages.map(a => `
+          <tr class="hover:bg-slate-800/40">
+            <td class="py-2.5 pr-2 font-semibold text-white">${a.name}</td>
+            <td class="py-2.5 px-1 text-center text-slate-400">${a.count}d</td>
+            <td class="py-2.5 px-1 text-center font-extrabold text-white">${a.score}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-emerald-400">${a.mood}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-sky-400">${a.sleep}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-amber-400">${a.anxiety}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-rose-400">${a.obsessions}</td>
+            <td class="py-2.5 px-1 text-center font-bold text-purple-400">${a.rumination}</td>
+            <td class="py-2.5 pl-2 text-[11px] text-indigo-300">${a.topEmotions}</td>
+            <td class="py-2.5 pl-2 text-[11px] text-amber-300/90">${a.topSideEffects}</td>
+          </tr>
+        `).join('');
+
+      const ctx = document.getElementById('contrastChart').getContext('2d');
+      if (contrastChartInstance) contrastChartInstance.destroy();
+      contrastChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: averages.map(a => `${a.name} (${a.count}d)`),
+          datasets: [
+            { label: 'Ánimo ↑', data: averages.map(a => a.mood), backgroundColor: '#10b981' },
+            { label: 'Sueño ↑', data: averages.map(a => a.sleep), backgroundColor: '#38bdf8' },
+            { label: 'Ansiedad ↓', data: averages.map(a => a.anxiety), backgroundColor: '#f59e0b' },
+            { label: 'Obsesiones ↓', data: averages.map(a => a.obsessions), backgroundColor: '#f43f5e' },
+            { label: 'Rumiación ↓', data: averages.map(a => a.rumination), backgroundColor: '#a855f7' }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true, max: 10, ticks: { stepSize: 2, color: '#94a3b8' }, grid: { color: '#33415540' } },
+            x: { ticks: { color: '#e2e8f0', font: { size: 10 } }, grid: { display: false } }
+          },
+          plugins: { legend: { labels: { color: '#cbd5e1', boxWidth: 12, font: { size: 11 } } } }
+        }
+      });
+    }
+
+    function getImpactBadgeColor(impact) {
+      if (!impact) return 'bg-slate-800 text-slate-400 border-slate-700';
+      if (impact.includes('Arruinó')) return 'bg-rose-950/80 text-rose-300 border-rose-700/60';
+      if (impact.includes('estrés') || impact.includes('ansiedad')) return 'bg-amber-950/80 text-amber-300 border-amber-700/60';
+      if (impact.includes('Mejoró')) return 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60';
+      return 'bg-slate-800 text-slate-300 border-slate-700';
+    }
+
+    function renderClinicalHistory() {
+      const container = document.getElementById('clinicalHistoryList');
+      const summaryBar = document.getElementById('filterSummaryBar');
+
+      const searchQuery = (document.getElementById('filterSearchInput')?.value || '').trim().toLowerCase();
+      const emotionFilter = document.getElementById('filterEmotionSelect')?.value || 'ALL';
+      const impactFilter = document.getElementById('filterImpactSelect')?.value || 'ALL';
+      const regimenFilter = document.getElementById('filterRegimenSelect')?.value || 'ALL';
+
+      const filteredLogs = clinicalLogs.filter(log => {
+        if (emotionFilter !== 'ALL' && !(log.emotions || []).includes(emotionFilter)) return false;
+        if (impactFilter !== 'ALL' && log.eventImpact !== impactFilter) return false;
+        if (regimenFilter !== 'ALL' && log.regimen !== regimenFilter) return false;
+        if (searchQuery) {
+          const searchableText = [log.date, log.dayName, log.regimen, log.eventText, log.eventImpact, log.note, ...(log.emotions || []), ...(log.triggers || []), ...(log.sideEffects || [])].join(' ').toLowerCase();
+          if (!searchableText.includes(searchQuery)) return false;
+        }
+        return true;
+      });
+
+      if (filteredLogs.length === 0) {
+        summaryBar.innerHTML = `<span class="text-slate-400">0 coincidencias de ${clinicalLogs.length} registros.</span>`;
+        container.innerHTML = '<p class="text-xs text-slate-500 italic col-span-full py-4 text-center">No hay registros que coincidan con los filtros.</p>';
+        return;
+      }
+
+      const avgScore = Math.round(filteredLogs.reduce((a, b) => a + calculateDayScore(b), 0) / filteredLogs.length);
+      const avgMood = (filteredLogs.reduce((a, b) => a + b.mood, 0) / filteredLogs.length).toFixed(1);
+      const avgAnx = (filteredLogs.reduce((a, b) => a + b.anxiety, 0) / filteredLogs.length).toFixed(1);
+      const avgRum = (filteredLogs.reduce((a, b) => a + b.rumination, 0) / filteredLogs.length).toFixed(1);
+
+      summaryBar.innerHTML = `
+        <span class="text-slate-300">Mostrando <strong class="text-white">${filteredLogs.length}</strong> de ${clinicalLogs.length} días</span>
+        <div class="flex flex-wrap gap-2.5 text-[11px]">
+          <span class="text-white font-bold">⭐ Punt. Media: ${avgScore}/100</span>
+          <span class="text-emerald-400 font-semibold">Ánimo: ${avgMood}</span>
+          <span class="text-amber-400 font-semibold">Ansiedad: ${avgAnx}</span>
+          <span class="text-purple-400 font-semibold">Rumiación: ${avgRum}</span>
+        </div>
+      `;
+
+      container.innerHTML = [...filteredLogs].reverse().map(log => {
+        const dayScore = calculateDayScore(log);
+        const scoreStyle = getScoreStyle(dayScore);
+        const isEditing = (editingLogId === log.id);
+        const inferredIso = inferISODateFromLog(log);
+
+        const editPanelHtml = isEditing ? `
+          <div class="mt-2.5 p-3 rounded-xl bg-slate-800/95 border border-sky-500/50 space-y-2.5 text-xs">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-1.5">
+              <span class="font-bold text-sky-300">✏️ Corregir Fecha / Datos</span>
+              <span id="editPreview_${log.id}" class="text-[11px] font-bold text-emerald-300 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                ${log.dayName || ''}, ${log.date || ''}
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button type="button" onclick="shiftCardEditDate(${log.id}, -1)" class="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1.5 rounded-lg font-semibold text-[11px]">
+                ◀ -1 día
+              </button>
+              <input id="editDate_${log.id}" type="date" value="${inferredIso}" onchange="updateCardEditPreview(${log.id})" class="bg-slate-900 border border-slate-600 text-white rounded-lg px-2.5 py-1 text-xs flex-1">
+              <button type="button" onclick="shiftCardEditDate(${log.id}, 1)" class="bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1.5 rounded-lg font-semibold text-[11px]">
+                +1 día ▶
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label class="text-[10px] text-slate-400 block mb-0.5">Hora de toma:</label>
+                <input id="editTime_${log.id}" type="time" value="${(log.doseTime && log.doseTime !== '-') ? log.doseTime : ''}" class="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs">
+              </div>
+              <div>
+                <label class="text-[10px] text-slate-400 block mb-0.5">Nota clínica:</label>
+                <input id="editNote_${log.id}" type="text" value="${(log.note || '').replace(/"/g, '&quot;')}" class="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs">
+              </div>
+            </div>
+
+            <div>
+              <label class="text-[10px] text-slate-400 block mb-0.5">Evento relevante del día:</label>
+              <textarea id="editEvent_${log.id}" rows="2" class="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-2 text-xs">${log.eventText || ''}</textarea>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-1">
+              <button type="button" onclick="toggleEditLog(${log.id})" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-medium">
+                Cancelar
+              </button>
+              <button type="button" onclick="saveCardEdit(${log.id})" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold">
+                💾 Guardar cambios
+              </button>
+            </div>
+          </div>
+        ` : '';
+
+        const emotionsHtml = (log.emotions && log.emotions.length > 0)
+          ? `<div class="flex flex-wrap gap-1 mt-2">
+              ${log.emotions.map(em => {
+                const isPos = posEmotions.includes(em);
+                const badgeClass = isPos ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border-rose-500/30';
+                return `<button onclick="filterByEmotionQuick('${em}')" class="text-[10px] font-semibold px-2 py-0.5 rounded-full border ${badgeClass}">${em}</button>`;
+              }).join('')}
+            </div>` : '';
+
+        const eventHtml = log.eventText
+          ? `<div class="mt-2.5 p-2.5 rounded-lg bg-indigo-950/40 border border-indigo-500/30 space-y-1">
+              <div class="flex justify-between items-center gap-1">
+                <span class="text-[10px] font-bold uppercase text-indigo-300">📌 ${log.dayName || 'Evento'}</span>
+                <span class="text-[10px] px-2 py-0.5 rounded border ${getImpactBadgeColor(log.eventImpact)}">${log.eventImpact || ''}</span>
+              </div>
+              <p class="text-xs text-slate-200 leading-relaxed">"${log.eventText}"</p>
+            </div>` : '';
+
+        return `
+          <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between space-y-2">
+            <div>
+              <div class="flex justify-between items-start gap-2">
+                <div>
+                  <span class="text-xs font-bold text-sky-400 bg-sky-500/10 border border-sky-500/30 px-2 py-0.5 rounded inline-block">${log.regimen}</span>
+                  <span class="text-[10px] text-slate-400 mt-1 block">🕒 Toma: ${log.doseTime || '-'} (${log.adherence || 'Registrado'})</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <div class="text-right mr-1">
+                    <span class="text-xs font-bold text-white block">${log.dayName || ''} ${log.date}</span>
+                    <span class="text-[10px] font-bold px-2 py-0.5 rounded-full border inline-block mt-0.5 ${scoreStyle.badgeClass}">
+                      Puntuación: ${dayScore}
+                    </span>
+                  </div>
+                  <button onclick="toggleEditLog(${log.id})" title="Editar fecha o datos" class="text-sky-400 hover:text-sky-300 bg-sky-500/10 border border-sky-500/30 rounded-lg px-2 py-1 text-xs self-start">✏️</button>
+                  <button onclick="deleteLog(${log.id})" title="Eliminar registro" class="text-slate-500 hover:text-rose-400 text-xs px-1.5 py-1 self-start">✕</button>
+                </div>
+              </div>
+
+              ${editPanelHtml}
+
+              <!-- Barra de Puntuación estilo Samsung Health -->
+              <div class="mt-2">
+                <div class="flex justify-between text-[10px] text-slate-400 mb-1">
+                  <span>Calidad del día (${scoreStyle.label})</span>
+                  <span class="font-bold ${scoreStyle.textClass}">${dayScore} / 100</span>
+                </div>
+                <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div class="${scoreStyle.barClass} h-full rounded-full" style="width: ${dayScore}%"></div>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-5 gap-1 text-center bg-slate-800/60 rounded-lg p-1.5 mt-2.5 text-[11px]">
+                <div><span class="text-slate-400 block text-[9px]">Ánimo</span><strong class="text-emerald-400">${log.mood}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Sueño</span><strong class="text-sky-400">${log.sleep}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Ansied.</span><strong class="text-amber-400">${log.anxiety}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Obses.</span><strong class="text-rose-400">${log.obsessions}/10</strong></div>
+                <div><span class="text-slate-400 block text-[9px]">Rumiación</span><strong class="text-purple-400">${log.rumination}/10</strong></div>
+              </div>
+
+              ${emotionsHtml}
+              ${eventHtml}
+
+              ${log.sideEffects && log.sideEffects.length > 0 ? `
+                <div class="flex flex-wrap gap-1 mt-2">
+                  ${log.sideEffects.map(se => `<span class="text-[10px] bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30">⚕️ ${se}</span>`).join('')}
+                </div>
+              ` : ''}
+            </div>
+            ${log.note ? `<p class="text-[11px] text-slate-400 border-t border-slate-800/80 pt-1.5 italic">Nota: "${log.note}"</p>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    // --- EXPORTACIÓN E IMPORTACIÓN MANUAL ---
+    function exportCSV() {
+      if (clinicalLogs.length === 0) { alert('No hay registros para exportar.'); return; }
+      const headers = ['Fecha', 'Dia_Semana', 'Puntuacion_0_100', 'Esquema_Farmacologico', 'Horario_Toma', 'Adherencia', 'Animo_1_10', 'Sueno_1_10', 'Ansiedad_1_10', 'Obsesiones_1_10', 'Rumiacion_1_10', 'Porcentaje_Habitos', 'Estados_Emocionales', 'Evento_Relevante_Del_Dia', 'Impacto_Del_Evento', 'Efectos_Secundarios', 'Disparadores', 'Notas_Clinicas'];
+      const rows = clinicalLogs.map(l => [
+        `"${l.date || ''}"`, `"${l.dayName || ''}"`, calculateDayScore(l), `"${(l.regimen || '').replace(/"/g, '""')}"`, `"${l.doseTime || '-'}"`, `"${l.adherence || '-'}"`,
+        l.mood, l.sleep, l.anxiety, l.obsessions, l.rumination, l.habitRate,
+        `"${(l.emotions || []).join('; ').replace(/"/g, '""')}"`, `"${(l.eventText || '').replace(/"/g, '""')}"`, `"${(l.eventImpact || '').replace(/"/g, '""')}"`,
+        `"${(l.sideEffects || []).join('; ').replace(/"/g, '""')}"`, `"${(l.triggers || []).join('; ').replace(/"/g, '""')}"`, `"${(l.note || '').replace(/"/g, '""')}"`
+      ]);
+      const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `reporte_clinico_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    }
+
+    function exportJSON() {
+      const backup = { habits, regimens, activeRegimen, negEmotions, posEmotions, sideEffects, triggers, clinicalLogs, lastDoseTime };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `backup_panel_${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+    }
+
+    function importJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (data.habits) habits = data.habits;
+          if (data.regimens) regimens = data.regimens;
+          if (data.activeRegimen) activeRegimen = data.activeRegimen;
+          if (data.negEmotions) negEmotions = data.negEmotions;
+          if (data.posEmotions) posEmotions = data.posEmotions;
+          if (data.sideEffects) sideEffects = data.sideEffects;
+          if (data.triggers) triggers = data.triggers;
+          if (data.clinicalLogs) clinicalLogs = data.clinicalLogs;
+          if (data.lastDoseTime) {
+            lastDoseTime = data.lastDoseTime;
+            document.getElementById('doseTimeInput').value = lastDoseTime;
+          }
+          saveState();
+          renderRegimens(); renderHabits(); renderEmotions(); renderSideEffects(); renderTriggers(); updateAllAnalytics();
+          alert('Respaldo restaurado correctamente.');
+        } catch (err) { alert('Archivo JSON inválido.'); }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    function clearAllData() {
+      if (!confirm('¿Deseas borrar todos los registros para empezar desde cero?')) return;
+      clinicalLogs = [];
+      habits.forEach(h => h.days = [false, false, false, false, false, false, false]);
+      regimens = ['Sin medicación'];
+      activeRegimen = 'Sin medicación';
+      saveState();
+      renderRegimens(); renderHabits(); updateAllAnalytics();
+    }
+
+    // Inicializar
+    document.getElementById('doseTimeInput').value = lastDoseTime;
+    setLogDateToday();
+    updateCloudBadge();
+    renderRegimens();
+    renderHabits();
+    renderEmotions();
+    renderSideEffects();
+    renderTriggers();
+    updateSliderLabels();
+    updateAllAnalytics();
+    if (cloudUrl) syncFromCloud(false);
+  </script>
+</body>
+</html>
